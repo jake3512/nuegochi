@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">누에고치</string>
+    <string name="welcome_tagline">나만의 반려동물을 직접 그리고, 화면 위에서 함께 키워보세요.</string>
+    <string name="create_pet">반려동물 만들기</string>
+
+    <!-- Pet creator -->
+    <string name="creator_hint">손가락으로 자유롭게 그려보세요. 점선은 위치를 잡는 데 참고만 하세요.</string>
+    <string name="creator_step_title">%1$d / %2$d · %3$s를 그려주세요</string>
+    <string name="brush_thin">얇게</string>
+    <string name="brush_medium">보통</string>
+    <string name="brush_thick">굵게</string>
+    <string name="eraser">지우개</string>
+    <string name="undo">실행 취소</string>
+    <string name="clear_all">모두 지우기</string>
+    <string name="skip_part">건너뛰기</string>
+    <string name="next">다음</string>
+    <string name="need_at_least_one_part">적어도 한 부위는 그려주세요</string>
+    <string name="need_a_name">이름을 입력해주세요</string>
+    <string name="name_prompt">반려동물의 이름을 지어주세요</string>
+    <string name="name_hint">예: 몽실이</string>
+    <string name="start_raising">키우기 시작하기</string>
+
+    <!-- Dashboard -->
+    <string name="rename">이름 변경</string>
+    <string name="confirm">확인</string>
+    <string name="cancel">취소</string>
+    <string name="pet_name_stage_format">%1$s · %2$s</string>
+    <string name="poop_indicator_format">💩 x%1$d · 청소가 필요해요</string>
+    <string name="growth_label_format">성장 %1$d / %2$d</string>
+    <string name="ending_banner_format">%1$s가 고치가 되었어요! 성장을 모두 마쳤습니다.</string>
+    <string name="start_new_pet">새로운 누에고치 시작하기</string>
+    <string name="overlay_toggle_label">화면 위에 항상 표시하기 (다른 앱 위에도 나타남)</string>
+
+    <string name="stat_hunger">배고픔</string>
+    <string name="stat_thirst">목마름</string>
+    <string name="stat_happiness">행복도</string>
+    <string name="stat_hygiene">청결도</string>
+
+    <string name="action_feed">🍚 먹이주기</string>
+    <string name="action_water">💧 물주기</string>
+    <string name="action_play">🎾 놀아주기</string>
+    <string name="action_clean">🧹 똥치우기</string>
+    <string name="action_wash">🛁 씻기기</string>
+
+    <!-- Ending -->
+    <string name="ending_title_format">%1$s가 고치가 되었어요!</string>
+    <string name="ending_message">정성껏 돌본 덕분에 누에고치가 무사히 성장을 마치고 고치를 지었어요. 이제 조용히 잠들어 다음 이야기를 기다립니다.</string>
+    <string name="ending_keep_watching">계속 지켜보기</string>
+
+    <!-- Notification -->
+    <string name="notification_title">%1$s가 화면 위에서 놀고 있어요</string>
+    <string name="notification_text">눌러서 상태를 확인해보세요</string>
+</resources>

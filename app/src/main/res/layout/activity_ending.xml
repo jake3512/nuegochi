@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="32dp"
+    android:background="@color/background">
+
+    <TextView
+        android:id="@+id/endingTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="26sp"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:textColor="@color/brand_primary_dark"
+        tools:text="몽실이가 고치가 되었어요!" />
+
+    <com.nuegochi.app.render.PetView
+        android:id="@+id/endingPetView"
+        android:layout_width="200dp"
+        android:layout_height="200dp"
+        android:layout_marginTop="24dp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:textSize="15sp"
+        android:gravity="center"
+        android:textColor="@color/text_secondary"
+        android:text="@string/ending_message" />
+
+    <Button
+        android:id="@+id/keepWatchingButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="32dp"
+        android:backgroundTint="@color/brand_primary"
+        android:text="@string/ending_keep_watching" />
+
+    <Button
+        android:id="@+id/newPetButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="@string/start_new_pet" />
+</LinearLayout>
