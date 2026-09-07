@@ -68,7 +68,7 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
     /** 0(sad)..1(delighted), from happiness - adds a droop when low, little happy hops when high. */
     var moodLevel: Float = 1f
     /** True when hygiene is low or there's uncleaned poop - plays a periodic disgusted shiver. */
-    var isDirty: Boolean = false
+    var isMessy: Boolean = false
 
     /** Convenience to update everything this view cares about from one status snapshot. */
     fun applyStats(stats: PetStats) {
@@ -76,7 +76,7 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         poopCount = stats.poopCount
         energyLevel = ((stats.hunger + stats.thirst) / 2f / PetStats.MAX_STAT).coerceIn(0f, 1f)
         moodLevel = (stats.happiness.toFloat() / PetStats.MAX_STAT).coerceIn(0f, 1f)
-        isDirty = stats.hygiene < 40 || stats.poopCount > 0
+        isMessy = stats.hygiene < 40 || stats.poopCount > 0
         invalidate()
     }
 
@@ -181,7 +181,7 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
     /**
      * Idle motion for a hatched, still-growing pet: bob speed/height track [energyLevel] (droopy
      * and slow when hungry/thirsty, lively when well-fed), a slow tilt tracks [moodLevel] (a sad
-     * lean when unhappy, a little happy hop when delighted), and [isDirty] adds a periodic shiver.
+     * lean when unhappy, a little happy hop when delighted), and [isMessy] adds a periodic shiver.
      */
     private fun drawComposedPetWithMotion(canvas: Canvas, size: Float, t: Long) {
         val bobPeriod = lerp(2600f, 1200f, energyLevel)
@@ -199,7 +199,7 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         val tilt = sin(t % 2000 / 2000f * TAU).toFloat() * droopDegrees
 
         var shakeX = 0f
-        if (isDirty) {
+        if (isMessy) {
             val shakePhase = (t % 2400L) / 2400f
             if (shakePhase < 0.25f) {
                 shakeX = sin(shakePhase / 0.25f * TAU * 4f).toFloat() * size * 0.01f
