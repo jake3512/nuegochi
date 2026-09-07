@@ -224,7 +224,7 @@ class PetOverlayService : LifecycleService() {
     }
 
     private fun playEffect(effect: PetEffect) {
-        petView?.playReaction()
+        petView?.playReaction(effect)
         val params = petParams ?: return
         hideEffect()
         val view = EffectOverlayView(this)
