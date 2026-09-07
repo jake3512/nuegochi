@@ -11,10 +11,8 @@ data class PetAppearance(
     val bodyColor: Int,
     val armColor: Int,
     val legColor: Int,
-    val tailColor: Int,
     val armLength: Float,
-    val legLength: Float,
-    val tailLength: Float
+    val legLength: Float
 ) {
     companion object {
         const val MIN_LIMB_LENGTH = 0.6f
@@ -27,10 +25,8 @@ data class PetAppearance(
                 bodyColor = skin,
                 armColor = skin,
                 legColor = skin,
-                tailColor = skin,
                 armLength = 1f,
-                legLength = 1f,
-                tailLength = 1f
+                legLength = 1f
             )
         }
     }

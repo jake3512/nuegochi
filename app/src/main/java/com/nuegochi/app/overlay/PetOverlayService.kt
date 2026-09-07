@@ -175,6 +175,7 @@ class PetOverlayService : LifecycleService() {
                 if (isPetting) return true
                 if (hypot(dx.toDouble(), dy.toDouble()) > dp(12)) {
                     container.removeCallbacks(longPressRunnable)
+                    petView?.isBeingDragged = true
                 }
                 params.x = (downParamX + dx).toInt()
                 params.y = (downParamY + dy).toInt()
@@ -185,6 +186,7 @@ class PetOverlayService : LifecycleService() {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 container.removeCallbacks(longPressRunnable)
                 isDragging = false
+                petView?.isBeingDragged = false
                 if (isPetting) {
                     stopPetting()
                 } else {

@@ -76,10 +76,8 @@ class PetRepository private constructor(context: Context) {
         bodyColor = prefs.getInt(KEY_BODY_COLOR, DEFAULT_APPEARANCE.bodyColor),
         armColor = prefs.getInt(KEY_ARM_COLOR, DEFAULT_APPEARANCE.armColor),
         legColor = prefs.getInt(KEY_LEG_COLOR, DEFAULT_APPEARANCE.legColor),
-        tailColor = prefs.getInt(KEY_TAIL_COLOR, DEFAULT_APPEARANCE.tailColor),
         armLength = prefs.getFloat(KEY_ARM_LENGTH, DEFAULT_APPEARANCE.armLength),
-        legLength = prefs.getFloat(KEY_LEG_LENGTH, DEFAULT_APPEARANCE.legLength),
-        tailLength = prefs.getFloat(KEY_TAIL_LENGTH, DEFAULT_APPEARANCE.tailLength)
+        legLength = prefs.getFloat(KEY_LEG_LENGTH, DEFAULT_APPEARANCE.legLength)
     )
 
     fun saveAppearance(appearance: PetAppearance) {
@@ -88,10 +86,8 @@ class PetRepository private constructor(context: Context) {
             .putInt(KEY_BODY_COLOR, appearance.bodyColor)
             .putInt(KEY_ARM_COLOR, appearance.armColor)
             .putInt(KEY_LEG_COLOR, appearance.legColor)
-            .putInt(KEY_TAIL_COLOR, appearance.tailColor)
             .putFloat(KEY_ARM_LENGTH, appearance.armLength)
             .putFloat(KEY_LEG_LENGTH, appearance.legLength)
-            .putFloat(KEY_TAIL_LENGTH, appearance.tailLength)
             .apply()
     }
 
@@ -311,10 +307,8 @@ class PetRepository private constructor(context: Context) {
         private const val KEY_BODY_COLOR = "appearance_body_color"
         private const val KEY_ARM_COLOR = "appearance_arm_color"
         private const val KEY_LEG_COLOR = "appearance_leg_color"
-        private const val KEY_TAIL_COLOR = "appearance_tail_color"
         private const val KEY_ARM_LENGTH = "appearance_arm_length"
         private const val KEY_LEG_LENGTH = "appearance_leg_length"
-        private const val KEY_TAIL_LENGTH = "appearance_tail_length"
 
         private val DEFAULT_APPEARANCE = PetAppearance.default()
 

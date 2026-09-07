@@ -116,21 +116,6 @@
             android:max="100" />
 
         <TextView
-            android:id="@+id/tailLengthLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:textSize="13sp"
-            android:textColor="@color/text_secondary"
-            tools:text="꼬리 길이" />
-
-        <SeekBar
-            android:id="@+id/tailLengthSeek"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:max="100" />
-
-        <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"

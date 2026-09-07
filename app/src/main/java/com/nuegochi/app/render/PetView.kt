@@ -40,6 +40,8 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         }
 
     var isWalking: Boolean = false
+    /** True while the user is dragging the pet around - plays a struggling/flailing motion. */
+    var isBeingDragged: Boolean = false
     var poopCount: Int = 0
         set(value) {
             field = value
@@ -249,7 +251,7 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         }
 
         val droopDegrees = (1f - moodLevel) * 6f
-        val tilt = sin(t % 2000 / 2000f * TAU).toFloat() * droopDegrees + reactionRotation
+        var tilt = sin(t % 2000 / 2000f * TAU).toFloat() * droopDegrees + reactionRotation
 
         var shakeX = 0f
         if (isMessy) {
@@ -257,6 +259,12 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
             if (shakePhase < 0.25f) {
                 shakeX = sin(shakePhase / 0.25f * TAU * 4f).toFloat() * size * 0.01f
             }
+        }
+
+        if (isBeingDragged) {
+            // Struggling in mid-air: a fast wobble and side-to-side squirm on top of anything else.
+            tilt += sin(t % 220 / 220f * TAU).toFloat() * 9f
+            shakeX += sin(t % 170 / 170f * TAU).toFloat() * size * 0.02f
         }
 
         canvas.save()
@@ -271,11 +279,28 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
 
     /**
      * The stick figure skeleton. Limbs pivot at their attachment point and swing during
-     * [isWalking]; their resting length is scaled by the corresponding [appearance] value.
+     * [isWalking] (or flail rapidly while [isBeingDragged]); their resting length is scaled by
+     * the corresponding [appearance] value.
      */
     private fun drawStickFigure(canvas: Canvas, size: Float, t: Long) {
-        val walkT = if (isWalking) sin(t % 900 / 900f * TAU).toFloat() else 0f
-        val tailWag = sin(t % 1400 / 1400f * TAU).toFloat()
+        val legSwing: Float
+        val armSwing: Float
+        when {
+            isBeingDragged -> {
+                // A frantic, out-of-sync flail - legs and arms kick at different phases.
+                legSwing = sin(t % 240 / 240f * TAU).toFloat() * 30f
+                armSwing = sin((t + 120) % 240 / 240f * TAU).toFloat() * 34f
+            }
+            isWalking -> {
+                val walkT = sin(t % 900 / 900f * TAU).toFloat()
+                legSwing = walkT * 16f
+                armSwing = walkT * 16f
+            }
+            else -> {
+                legSwing = 0f
+                armSwing = 0f
+            }
+        }
         val limbWidth = size * 0.045f
 
         val headCx = size * 0.5f
@@ -284,34 +309,18 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         val neckY = size * 0.30f
         val shoulderY = size * 0.36f
         val hipY = size * 0.60f
-        val tailBaseY = size * 0.56f
-
-        // Tail (drawn first so it sits behind the body).
-        shapePaint.style = Paint.Style.STROKE
-        shapePaint.strokeWidth = limbWidth * 0.85f
-        shapePaint.color = appearance.tailColor
-        canvas.save()
-        canvas.translate(headCx, tailBaseY)
-        canvas.rotate(58f + tailWag * 10f)
-        val tailLen = size * 0.26f * appearance.tailLength
-        val tail = Path().apply {
-            moveTo(0f, 0f)
-            quadTo(tailLen * 0.6f, tailLen * 0.35f, tailLen, -tailLen * 0.1f)
-        }
-        canvas.drawPath(tail, shapePaint)
-        canvas.restore()
 
         // Legs.
         val legLen = size * 0.30f * appearance.legLength
         shapePaint.color = appearance.legColor
-        drawLimb(canvas, headCx, hipY, legLen, limbWidth, restAngle = 18f, swingDegrees = walkT * 16f, sign = 1f)
-        drawLimb(canvas, headCx, hipY, legLen, limbWidth, restAngle = 18f, swingDegrees = walkT * 16f, sign = -1f)
+        drawLimb(canvas, headCx, hipY, legLen, limbWidth, restAngle = 18f, swingDegrees = legSwing, sign = 1f)
+        drawLimb(canvas, headCx, hipY, legLen, limbWidth, restAngle = 18f, swingDegrees = legSwing, sign = -1f)
 
         // Arms.
         val armLen = size * 0.24f * appearance.armLength
         shapePaint.color = appearance.armColor
-        drawLimb(canvas, headCx, shoulderY, armLen, limbWidth, restAngle = 30f, swingDegrees = walkT * 16f, sign = 1f)
-        drawLimb(canvas, headCx, shoulderY, armLen, limbWidth, restAngle = 30f, swingDegrees = walkT * 16f, sign = -1f)
+        drawLimb(canvas, headCx, shoulderY, armLen, limbWidth, restAngle = 30f, swingDegrees = armSwing, sign = 1f)
+        drawLimb(canvas, headCx, shoulderY, armLen, limbWidth, restAngle = 30f, swingDegrees = armSwing, sign = -1f)
 
         // Body (spine from neck to hip).
         shapePaint.style = Paint.Style.STROKE

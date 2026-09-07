@@ -6,13 +6,12 @@
 
     <!-- Pet creator -->
     <string name="creator_title">반려동물 모양을 꾸며보세요</string>
-    <string name="creator_hint">부위를 선택해 색을 칠하고, 팔/다리/꼬리 길이를 슬라이더로 조절해보세요.</string>
+    <string name="creator_hint">부위를 선택해 색을 칠하고, 팔/다리 길이를 슬라이더로 조절해보세요.</string>
     <string name="part_select_label">부위 선택</string>
     <string name="color_select_label">색상</string>
     <string name="length_label_format">%1$s 길이</string>
     <string name="part_arms">팔</string>
     <string name="part_legs">다리</string>
-    <string name="part_tail">꼬리</string>
     <string name="need_a_name">이름을 입력해주세요</string>
     <string name="name_prompt">반려동물의 이름을 지어주세요</string>
     <string name="name_hint">예: 몽실이</string>

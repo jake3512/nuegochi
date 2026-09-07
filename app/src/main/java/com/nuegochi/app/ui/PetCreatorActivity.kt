@@ -19,7 +19,7 @@ import com.nuegochi.app.databinding.ActivityPetCreatorBinding
 
 /**
  * A one-screen stick-figure customizer: pick a body part, color it from the palette, adjust
- * arm/leg/tail length with the sliders, then name the pet and start raising it.
+ * arm/leg length with the sliders, then name the pet and start raising it.
  */
 class PetCreatorActivity : AppCompatActivity() {
 
@@ -101,20 +101,15 @@ class PetCreatorActivity : AppCompatActivity() {
     private fun setupLengthSliders() {
         binding.armLengthLabel.text = getString(R.string.length_label_format, getString(R.string.part_arms))
         binding.legLengthLabel.text = getString(R.string.length_label_format, getString(R.string.part_legs))
-        binding.tailLengthLabel.text = getString(R.string.length_label_format, getString(R.string.part_tail))
 
         binding.armLengthSeek.progress = lengthToProgress(appearance.armLength)
         binding.legLengthSeek.progress = lengthToProgress(appearance.legLength)
-        binding.tailLengthSeek.progress = lengthToProgress(appearance.tailLength)
 
         binding.armLengthSeek.setOnSeekBarChangeListener(
             onLengthChange { appearance = appearance.copy(armLength = it) }
         )
         binding.legLengthSeek.setOnSeekBarChangeListener(
             onLengthChange { appearance = appearance.copy(legLength = it) }
-        )
-        binding.tailLengthSeek.setOnSeekBarChangeListener(
-            onLengthChange { appearance = appearance.copy(tailLength = it) }
         )
     }
 
@@ -143,7 +138,6 @@ class PetCreatorActivity : AppCompatActivity() {
         BodyPart.BODY -> base.copy(bodyColor = color)
         BodyPart.ARMS -> base.copy(armColor = color)
         BodyPart.LEGS -> base.copy(legColor = color)
-        BodyPart.TAIL -> base.copy(tailColor = color)
     }
 
     private fun refreshPreview() {
