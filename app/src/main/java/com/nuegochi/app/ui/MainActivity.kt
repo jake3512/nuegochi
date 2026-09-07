@@ -87,7 +87,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         binding.overlaySwitch.isChecked = repository.isOverlayEnabled() && hasOverlayPermission()
-        if (repository.hasPet()) binding.previewPet.loadFromRepository(repository)
+        if (repository.hasPet()) binding.previewPet.applyAppearance(repository.currentAppearance())
     }
 
     private fun render(stats: PetStats) {

@@ -2,7 +2,6 @@ package com.nuegochi.app.data
 
 import android.content.Context
 import android.content.SharedPreferences
-import java.io.File
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -72,17 +71,36 @@ class PetRepository private constructor(context: Context) {
         applyDecay()
     }
 
-    fun partFile(part: PetPart): File = File(appContext.filesDir, part.fileName)
+    fun currentAppearance(): PetAppearance = PetAppearance(
+        headColor = prefs.getInt(KEY_HEAD_COLOR, DEFAULT_APPEARANCE.headColor),
+        bodyColor = prefs.getInt(KEY_BODY_COLOR, DEFAULT_APPEARANCE.bodyColor),
+        armColor = prefs.getInt(KEY_ARM_COLOR, DEFAULT_APPEARANCE.armColor),
+        legColor = prefs.getInt(KEY_LEG_COLOR, DEFAULT_APPEARANCE.legColor),
+        tailColor = prefs.getInt(KEY_TAIL_COLOR, DEFAULT_APPEARANCE.tailColor),
+        armLength = prefs.getFloat(KEY_ARM_LENGTH, DEFAULT_APPEARANCE.armLength),
+        legLength = prefs.getFloat(KEY_LEG_LENGTH, DEFAULT_APPEARANCE.legLength),
+        tailLength = prefs.getFloat(KEY_TAIL_LENGTH, DEFAULT_APPEARANCE.tailLength)
+    )
 
-    fun hasAllParts(): Boolean = PetPart.entries.all { partFile(it).exists() }
+    fun saveAppearance(appearance: PetAppearance) {
+        prefs.edit()
+            .putInt(KEY_HEAD_COLOR, appearance.headColor)
+            .putInt(KEY_BODY_COLOR, appearance.bodyColor)
+            .putInt(KEY_ARM_COLOR, appearance.armColor)
+            .putInt(KEY_LEG_COLOR, appearance.legColor)
+            .putInt(KEY_TAIL_COLOR, appearance.tailColor)
+            .putFloat(KEY_ARM_LENGTH, appearance.armLength)
+            .putFloat(KEY_LEG_LENGTH, appearance.legLength)
+            .putFloat(KEY_TAIL_LENGTH, appearance.tailLength)
+            .apply()
+    }
 
-    /** Wipes any previous pet's drawn parts and stats. Call once, right before a fresh creation flow starts. */
+    /** Wipes any previous pet's appearance and stats. Call once, right before a fresh creation flow starts. */
     fun prepareForNewPetCreation() {
-        PetPart.entries.forEach { partFile(it).delete() }
         prefs.edit().clear().apply()
     }
 
-    /** Call after the user has drawn their parts and chosen a name to actually start raising the pet. */
+    /** Call after the user has picked an appearance and name to actually start raising the pet. */
     fun finalizeNewPet(name: String) {
         save(Precise(
             name = name.trim().ifBlank { "누에" },
@@ -283,6 +301,17 @@ class PetRepository private constructor(context: Context) {
         private const val KEY_LAST_UPDATE = "pet_last_update"
         private const val KEY_ENDING_SHOWN = "pet_ending_shown"
         private const val KEY_OVERLAY_ENABLED = "overlay_enabled"
+
+        private const val KEY_HEAD_COLOR = "appearance_head_color"
+        private const val KEY_BODY_COLOR = "appearance_body_color"
+        private const val KEY_ARM_COLOR = "appearance_arm_color"
+        private const val KEY_LEG_COLOR = "appearance_leg_color"
+        private const val KEY_TAIL_COLOR = "appearance_tail_color"
+        private const val KEY_ARM_LENGTH = "appearance_arm_length"
+        private const val KEY_LEG_LENGTH = "appearance_leg_length"
+        private const val KEY_TAIL_LENGTH = "appearance_tail_length"
+
+        private val DEFAULT_APPEARANCE = PetAppearance.default()
 
         private const val HUNGER_DECAY_PER_MIN = 1.0 / 3.0
         private const val THIRST_DECAY_PER_MIN = 1.0 / 4.0

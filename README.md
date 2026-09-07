@@ -8,9 +8,9 @@
 
 ## 주요 기능
 
-- **직접 그리는 2D 반려동물**: 머리 · 몸통 · 왼팔 · 오른팔 · 왼다리 · 오른다리 · 꼬리를
-  손가락으로 한 부위씩 따로 그려서 나만의 반려동물을 만듭니다. 색상 팔레트, 굵기 조절,
-  지우개, 실행 취소, 다시 그리기를 지원합니다.
+- **커스텀 스틱맨 반려동물**: 머리 · 몸통 · 팔 · 다리 · 꼬리로 이루어진 작은 스틱맨 모양의
+  반려동물을 직접 꾸밉니다. 부위를 선택해 색상 팔레트로 칠하고, 팔/다리/꼬리 길이는
+  슬라이더로 자유롭게 조절할 수 있습니다.
 - **화면 어디서나 표시**: `SYSTEM_ALERT_WINDOW` 권한을 받아 다른 앱 위에도 항상 보이는
   플로팅 창(오버레이)으로 반려동물을 표시합니다. 화면을 자유롭게 돌아다니고, 손가락으로
   드래그해서 옮길 수도 있습니다.
@@ -31,7 +31,7 @@
 | 화면 | 설명 |
 | --- | --- |
 | `MainActivity` | 반려동물이 없으면 "반려동물 만들기" 화면, 있으면 상태 대시보드(스탯, 성장 게이지, 돌봄 버튼, "화면 위에 항상 표시" 스위치)를 보여줍니다. |
-| `PetCreatorActivity` | 부위별로 손그림을 그리고 이름을 짓는 화면입니다. |
+| `PetCreatorActivity` | 부위별 색상과 팔/다리/꼬리 길이를 정하고 이름을 짓는 스틱맨 커스터마이즈 화면입니다. |
 | `PetOverlayService` | `WindowManager` 오버레이로 반려동물을 화면 위에 그리고, 자율적으로 돌아다니며 탭/드래그에 반응하는 포그라운드 서비스입니다. |
 | `EndingActivity` | 반려동물이 번데기가 되었을 때 한 번 표시되는 엔딩 화면입니다. |
 
@@ -39,9 +39,8 @@
 
 ```
 app/src/main/java/com/nuegochi/app/
-├── data/      // PetStage, PetStats, PetRepository(저장/성장/스탯 로직), PetPart, PetEffect
-├── draw/      // DrawingView(손가락 그림판), BitmapIO
-├── render/    // PetView - 그린 부위들을 합성해 반려동물을 그리는 커스텀 뷰
+├── data/      // PetStage, PetStats, PetAppearance, BodyPart, PetRepository(저장/성장/스탯 로직), PetEffect
+├── render/    // PetView - 스틱맨 반려동물을 그리는 커스텀 뷰
 ├── overlay/   // PetOverlayService, ActionMenuView, EffectOverlayView, BootReceiver
 └── ui/        // MainActivity, PetCreatorActivity, EndingActivity
 ```
@@ -57,7 +56,7 @@ app/src/main/java/com/nuegochi/app/
    엽니다. Gradle 동기화가 자동으로 진행됩니다. (minSdk 26 / targetSdk 34, Kotlin 1.9,
    AGP 8.5, Gradle 8.7)
 2. 실제 기기 또는 에뮬레이터(API 26 이상)에서 실행합니다.
-3. 처음 실행하면 반려동물을 그리고 이름을 짓는 화면이 나옵니다.
+3. 처음 실행하면 스틱맨 반려동물을 색칠·조절하고 이름을 짓는 화면이 나옵니다.
 4. 대시보드에서 "화면 위에 항상 표시하기" 스위치를 켜면 다른 앱 위에 표시할 수 있는 권한
    (다른 앱 위에 표시)을 요청합니다. 허용하면 반려동물이 화면 위에 나타나 돌아다니기
    시작합니다.
@@ -77,4 +76,5 @@ app/src/main/java/com/nuegochi/app/
 
 - 배터리 절약을 위해 반려동물의 상태 갱신은 30초~5초 간격으로만 확인하며, 화면 애니메이션은
   가벼운 2D 벡터/캔버스 드로잉만 사용합니다.
-- 그림 부위 이미지는 앱 내부 저장소(`filesDir`)에 PNG로 저장됩니다.
+- 반려동물 외형(부위별 색상, 팔/다리/꼬리 길이)은 이미지가 아니라 `SharedPreferences`에 저장된
+  값으로부터 매번 그려집니다.

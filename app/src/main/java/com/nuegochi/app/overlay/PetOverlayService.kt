@@ -141,6 +141,7 @@ class PetOverlayService : LifecycleService() {
         windowManager.addView(container, params)
 
         container.setOnTouchListener { _, event -> handleTouch(event) }
+        view.applyAppearance(repository.currentAppearance())
         view.applyStats(repository.currentStats())
     }
 
