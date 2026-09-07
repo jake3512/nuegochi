@@ -16,6 +16,8 @@ import android.view.animation.AccelerateDecelerateInterpolator
 import com.nuegochi.app.data.PetPart
 import com.nuegochi.app.data.PetRepository
 import com.nuegochi.app.data.PetStage
+import com.nuegochi.app.data.PetStats
+import kotlin.math.abs
 import kotlin.math.sin
 
 /**
@@ -26,6 +28,10 @@ import kotlin.math.sin
 class PetView(context: Context, attrs: AttributeSet? = null) : View(context, attrs) {
 
     private data class Slot(val part: PetPart, val rect: RectF, val rotates: Boolean = false)
+
+    private companion object {
+        val TAU = (Math.PI * 2).toFloat()
+    }
 
     // Normalized (0..1) placement of every part within the view's square bounds, back-to-front.
     private val blueprint = listOf(
@@ -56,6 +62,23 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
             invalidate()
         }
     var bodyTint: Int = Color.parseColor("#F4CE9B")
+
+    /** 0(exhausted)..1(full of energy), from hunger+thirst - slows and shrinks the idle bob. */
+    var energyLevel: Float = 1f
+    /** 0(sad)..1(delighted), from happiness - adds a droop when low, little happy hops when high. */
+    var moodLevel: Float = 1f
+    /** True when hygiene is low or there's uncleaned poop - plays a periodic disgusted shiver. */
+    var isDirty: Boolean = false
+
+    /** Convenience to update everything this view cares about from one status snapshot. */
+    fun applyStats(stats: PetStats) {
+        stage = stats.stage
+        poopCount = stats.poopCount
+        energyLevel = ((stats.hunger + stats.thirst) / 2f / PetStats.MAX_STAT).coerceIn(0f, 1f)
+        moodLevel = (stats.happiness.toFloat() / PetStats.MAX_STAT).coerceIn(0f, 1f)
+        isDirty = stats.hygiene < 40 || stats.poopCount > 0
+        invalidate()
+    }
 
     private var reactionScale = 1f
     private var reactionAnimator: ValueAnimator? = null
@@ -117,16 +140,14 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         if (size <= 0f) return
         val left = (width - size) / 2f
         val top = (height - size) / 2f
+        val t = SystemClock.uptimeMillis()
 
         canvas.save()
-        val bob = sin(SystemClock.uptimeMillis() % 1600 / 1600f * (Math.PI * 2)).toFloat() * size * 0.015f
-        canvas.translate(left, top + bob)
-        canvas.scale(stage.scale * reactionScale, stage.scale * reactionScale, size / 2f, size / 2f)
-
+        canvas.translate(left, top)
         when (stage) {
-            PetStage.EGG -> drawEgg(canvas, size)
-            PetStage.COCOON -> drawCocoon(canvas, size)
-            else -> drawComposedPet(canvas, size)
+            PetStage.EGG -> drawEggWithMotion(canvas, size, t)
+            PetStage.COCOON -> drawCocoonWithMotion(canvas, size, t)
+            else -> drawComposedPetWithMotion(canvas, size, t)
         }
         canvas.restore()
 
@@ -135,8 +156,68 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         }
     }
 
-    private fun drawComposedPet(canvas: Canvas, size: Float) {
-        val walkT = if (isWalking) sin(SystemClock.uptimeMillis() % 900 / 900f * (Math.PI * 2)).toFloat() else 0f
+    /** Egg rocks gently side to side, like something inside is stirring. */
+    private fun drawEggWithMotion(canvas: Canvas, size: Float, t: Long) {
+        val wobble = sin(t % 1100 / 1100f * TAU).toFloat() * 5f
+        val hop = abs(sin(t % 1100 / 1100f * TAU)).toFloat() * size * 0.02f
+        canvas.save()
+        canvas.translate(0f, -hop)
+        canvas.rotate(wobble, size / 2f, size * 0.86f)
+        canvas.scale(stage.scale * reactionScale, stage.scale * reactionScale, size / 2f, size / 2f)
+        drawEgg(canvas, size)
+        canvas.restore()
+    }
+
+    /** Cocoon sways slowly from its top, like it's hanging. */
+    private fun drawCocoonWithMotion(canvas: Canvas, size: Float, t: Long) {
+        val sway = sin(t % 2600 / 2600f * TAU).toFloat() * 3.5f
+        canvas.save()
+        canvas.rotate(sway, size / 2f, size * 0.14f)
+        canvas.scale(stage.scale * reactionScale, stage.scale * reactionScale, size / 2f, size / 2f)
+        drawCocoon(canvas, size)
+        canvas.restore()
+    }
+
+    /**
+     * Idle motion for a hatched, still-growing pet: bob speed/height track [energyLevel] (droopy
+     * and slow when hungry/thirsty, lively when well-fed), a slow tilt tracks [moodLevel] (a sad
+     * lean when unhappy, a little happy hop when delighted), and [isDirty] adds a periodic shiver.
+     */
+    private fun drawComposedPetWithMotion(canvas: Canvas, size: Float, t: Long) {
+        val bobPeriod = lerp(2600f, 1200f, energyLevel)
+        val bobAmplitude = lerp(0.007f, 0.02f, energyLevel) * size
+        var bob = sin(t % bobPeriod.toLong() / bobPeriod * TAU).toFloat() * bobAmplitude
+
+        if (moodLevel > 0.6f) {
+            val hopPhase = (t % 3200L) / 3200f
+            if (hopPhase < 0.12f) {
+                bob -= sin(hopPhase / 0.12f * Math.PI.toFloat()) * size * 0.03f
+            }
+        }
+
+        val droopDegrees = (1f - moodLevel) * 6f
+        val tilt = sin(t % 2000 / 2000f * TAU).toFloat() * droopDegrees
+
+        var shakeX = 0f
+        if (isDirty) {
+            val shakePhase = (t % 2400L) / 2400f
+            if (shakePhase < 0.25f) {
+                shakeX = sin(shakePhase / 0.25f * TAU * 4f).toFloat() * size * 0.01f
+            }
+        }
+
+        canvas.save()
+        canvas.translate(shakeX, bob)
+        canvas.rotate(tilt, size / 2f, size * 0.4f)
+        canvas.scale(stage.scale * reactionScale, stage.scale * reactionScale, size / 2f, size / 2f)
+        drawComposedPet(canvas, size, t)
+        canvas.restore()
+    }
+
+    private fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t.coerceIn(0f, 1f)
+
+    private fun drawComposedPet(canvas: Canvas, size: Float, t: Long) {
+        val walkT = if (isWalking) sin(t % 900 / 900f * TAU).toFloat() else 0f
         for (slot in blueprint) {
             val bmp = partBitmaps[slot.part] ?: continue
             val dest = RectF(
