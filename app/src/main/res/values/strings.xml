@@ -5,8 +5,9 @@
     <string name="create_pet">반려동물 만들기</string>
 
     <!-- Pet creator -->
-    <string name="creator_hint">손가락으로 자유롭게 그려보세요. 점선은 위치를 잡는 데 참고만 하세요.</string>
+    <string name="creator_hint">손가락으로 자유롭게 그리거나, 아래에서 색과 무늬를 골라 빠르게 채워보세요. 점선은 위치 참고용입니다.</string>
     <string name="creator_step_title">%1$d / %2$d · %3$s를 그려주세요</string>
+    <string name="pattern_none">무늬 없음</string>
     <string name="brush_thin">얇게</string>
     <string name="brush_medium">보통</string>
     <string name="brush_thick">굵게</string>
