@@ -141,9 +141,7 @@ class PetOverlayService : LifecycleService() {
         windowManager.addView(container, params)
 
         container.setOnTouchListener { _, event -> handleTouch(event) }
-        val stats = repository.currentStats()
-        view.stage = stats.stage
-        view.poopCount = stats.poopCount
+        view.applyStats(repository.currentStats())
     }
 
     private fun handleTouch(event: MotionEvent): Boolean {
@@ -226,7 +224,7 @@ class PetOverlayService : LifecycleService() {
     }
 
     private fun playEffect(effect: PetEffect) {
-        petView?.playReaction()
+        petView?.playReaction(effect)
         val params = petParams ?: return
         hideEffect()
         val view = EffectOverlayView(this)
@@ -262,8 +260,7 @@ class PetOverlayService : LifecycleService() {
     private fun observeState() {
         lifecycleScope.launch {
             repository.statsFlow.collect { stats ->
-                petView?.stage = stats.stage
-                petView?.poopCount = stats.poopCount
+                petView?.applyStats(stats)
                 if (stats.stage == PetStage.COCOON) {
                     openEndingIfNeeded(stats)
                 }

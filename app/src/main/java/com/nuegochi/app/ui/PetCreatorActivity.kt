@@ -5,6 +5,8 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.View
+import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.nuegochi.app.R
@@ -14,6 +16,7 @@ import com.nuegochi.app.data.PetStage
 import com.nuegochi.app.databinding.ActivityPetCreatorBinding
 import com.nuegochi.app.draw.BitmapIO
 import com.nuegochi.app.draw.GuideShape
+import com.nuegochi.app.draw.PatternPreset
 
 /**
  * Walks the user through hand-drawing every body part one at a time, then lets them name
@@ -42,6 +45,7 @@ class PetCreatorActivity : AppCompatActivity() {
         repository.prepareForNewPetCreation()
 
         buildPalette()
+        buildPatternRow()
         setupBrushControls()
         setupNavigation()
         showPart(0)
@@ -63,11 +67,37 @@ class PetCreatorActivity : AppCompatActivity() {
                     binding.drawingView.eraseMode = false
                 }
             }
-            val params = android.widget.LinearLayout.LayoutParams(sizePx, sizePx).apply {
+            val params = LinearLayout.LayoutParams(sizePx, sizePx).apply {
                 marginEnd = marginPx
             }
             binding.colorPaletteRow.addView(swatch, params)
             if (index == 0) swatch.performClick()
+        }
+    }
+
+    /** Quick base-fill chips: pick a pattern to fill the part's silhouette with the current color. */
+    private fun buildPatternRow() {
+        binding.patternRow.removeAllViews()
+        val paddingPx = (14 * resources.displayMetrics.density).toInt()
+        val marginPx = (6 * resources.displayMetrics.density).toInt()
+
+        fun addChip(label: String, onClick: () -> Unit) {
+            val chip = Button(this, null, android.R.attr.buttonStyleSmall).apply {
+                text = label
+                setAllCaps(false)
+                setPadding(paddingPx, 0, paddingPx, 0)
+                setOnClickListener { onClick() }
+            }
+            val params = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { marginEnd = marginPx }
+            binding.patternRow.addView(chip, params)
+        }
+
+        addChip(getString(R.string.pattern_none)) { binding.drawingView.clearPattern() }
+        PatternPreset.entries.forEach { preset ->
+            addChip(preset.displayName) { binding.drawingView.applyPattern(preset, binding.drawingView.brushColor) }
         }
     }
 

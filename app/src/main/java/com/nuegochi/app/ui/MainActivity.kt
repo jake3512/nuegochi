@@ -97,8 +97,7 @@ class MainActivity : AppCompatActivity() {
         if (!hasPet) return
 
         binding.petNameStage.text = getString(R.string.pet_name_stage_format, stats.name, stats.stage.label)
-        binding.previewPet.stage = stats.stage
-        binding.previewPet.poopCount = stats.poopCount
+        binding.previewPet.applyStats(stats)
 
         if (stats.poopCount > 0) {
             binding.poopIndicator.visibility = View.VISIBLE
