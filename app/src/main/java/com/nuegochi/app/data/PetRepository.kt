@@ -163,6 +163,11 @@ class PetRepository private constructor(context: Context) {
         )
     }
 
+    /** A quick affectionate stroke - a small mood bump with no growth exp, meant to be repeatable. */
+    fun pet() = applyAction(PetEffect.PET) { s ->
+        s.copy(happiness = (s.happiness + 2).coerceAtMost(100.0))
+    }
+
     fun markEndingShown() {
         applyDecay()
         save(precise.copy(endingShown = true))

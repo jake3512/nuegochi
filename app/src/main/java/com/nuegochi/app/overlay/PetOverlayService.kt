@@ -63,6 +63,17 @@ class PetOverlayService : LifecycleService() {
     private var downParamY = 0
     private var endingLaunched = false
 
+    // Long-press-to-pet state.
+    private var isPetting = false
+    private val longPressRunnable = Runnable { startPetting() }
+    private val petTickRunnable = object : Runnable {
+        override fun run() {
+            if (!isPetting) return
+            repository.pet()
+            petContainer?.postDelayed(this, PET_TICK_MS)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         repository = PetRepository.get(this)
@@ -156,10 +167,15 @@ class PetOverlayService : LifecycleService() {
                 downParamX = params.x
                 downParamY = params.y
                 hideActionMenu()
+                container.postDelayed(longPressRunnable, LONG_PRESS_MS)
             }
             MotionEvent.ACTION_MOVE -> {
                 val dx = event.rawX - downRawX
                 val dy = event.rawY - downRawY
+                if (isPetting) return true
+                if (hypot(dx.toDouble(), dy.toDouble()) > dp(12)) {
+                    container.removeCallbacks(longPressRunnable)
+                }
                 params.x = (downParamX + dx).toInt()
                 params.y = (downParamY + dy).toInt()
                 runCatching { windowManager.updateViewLayout(container, params) }
@@ -167,26 +183,48 @@ class PetOverlayService : LifecycleService() {
                 currentY = params.y.toFloat()
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                container.removeCallbacks(longPressRunnable)
                 isDragging = false
-                val moved = hypot((event.rawX - downRawX).toDouble(), (event.rawY - downRawY).toDouble())
-                if (moved < dp(12)) {
-                    onPetTapped()
+                if (isPetting) {
+                    stopPetting()
                 } else {
-                    pausedUntil = SystemClock.elapsedRealtime() + 800
+                    val moved = hypot((event.rawX - downRawX).toDouble(), (event.rawY - downRawY).toDouble())
+                    if (moved < dp(12)) {
+                        onPetTapped(event.x, event.y)
+                    } else {
+                        pausedUntil = SystemClock.elapsedRealtime() + 800
+                    }
                 }
             }
         }
         return true
     }
 
-    private fun onPetTapped() {
+    private fun onPetTapped(x: Float, y: Float) {
         val stats = repository.currentStats()
         if (stats.stage == PetStage.EGG) return
         if (stats.stage == PetStage.COCOON) {
             openEndingIfNeeded(stats)
             return
         }
+        if (petView?.isPoopHit(x, y) == true) {
+            repository.cleanPoop()
+            return
+        }
         showActionMenu()
+    }
+
+    /** Long-press-and-hold on the pet: pets it affectionately for as long as the finger stays down. */
+    private fun startPetting() {
+        if (isPetting) return
+        isPetting = true
+        hideActionMenu()
+        petTickRunnable.run()
+    }
+
+    private fun stopPetting() {
+        isPetting = false
+        petContainer?.removeCallbacks(petTickRunnable)
     }
 
     private fun showActionMenu() {
@@ -352,6 +390,8 @@ class PetOverlayService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        petContainer?.removeCallbacks(longPressRunnable)
+        petContainer?.removeCallbacks(petTickRunnable)
         hideActionMenu()
         hideEffect()
         petContainer?.let { runCatching { windowManager.removeView(it) } }
@@ -362,5 +402,7 @@ class PetOverlayService : LifecycleService() {
     companion object {
         private const val NOTIF_ID = 42
         private const val WANDER_SPEED_PX_PER_SEC = 90f
+        private const val LONG_PRESS_MS = 350L
+        private const val PET_TICK_MS = 380L
     }
 }

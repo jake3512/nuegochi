@@ -102,6 +102,7 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         val duration = when (effect) {
             PetEffect.HATCH, PetEffect.EVOLVE, PetEffect.COCOON -> 600L
             PetEffect.PLAY -> 650L
+            PetEffect.PET -> 320L
             else -> 400L
         }
         reactionAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
@@ -162,6 +163,13 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
                 reactionRotation = sin(t * Math.PI.toFloat() * 5f) * 5f * (1f - t)
                 reactionScaleX = 1f + hump * 0.08f
                 reactionScaleY = 1f + hump * 0.08f
+                reactionOffsetY = 0f
+            }
+            PetEffect.PET -> {
+                // A small, content wiggle - gentler than the shake-off, meant to repeat while held.
+                reactionRotation = sin(t * Math.PI.toFloat() * 2f) * 4f * (1f - t)
+                reactionScaleX = 1f + hump * 0.05f
+                reactionScaleY = 1f + hump * 0.05f
                 reactionOffsetY = 0f
             }
             PetEffect.HATCH, PetEffect.EVOLVE, PetEffect.COCOON -> {
@@ -372,6 +380,25 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
             canvas.drawLine(rect.left + size * 0.02f, y, rect.right - size * 0.02f, y, shapePaint)
             y += size * 0.09f
         }
+    }
+
+    /** Whether a tap at the view-local ([x], [y]) landed on one of the drawn poop icons. */
+    fun isPoopHit(x: Float, y: Float): Boolean {
+        if (poopCount <= 0 || !stage.isMoving) return false
+        val size = minOf(width, height).toFloat()
+        if (size <= 0f) return false
+        val left = (width - size) / 2f
+        val top = (height - size) / 2f
+        val count = poopCount.coerceAtMost(5)
+        val hitRadius = size * 0.075f
+        for (i in 0 until count) {
+            val cx = left + size * (0.12f + i * 0.16f)
+            val cy = top + size * 0.96f
+            val dx = x - cx
+            val dy = y - cy
+            if (dx * dx + dy * dy <= hitRadius * hitRadius) return true
+        }
+        return false
     }
 
     private fun drawPoops(canvas: Canvas, left: Float, top: Float, size: Float) {
