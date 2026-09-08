@@ -123,25 +123,18 @@ class PetRepository private constructor(context: Context) {
     }
 
     fun feed() = applyAction(PetEffect.FEED) { s ->
-        s.copy(
-            hunger = (s.hunger + 30).coerceAtMost(100.0),
-            growthExp = s.growthExp + if (s.hunger < 100.0) 8 else 2
-        )
+        s.copy(hunger = (s.hunger + 30).coerceAtMost(100.0))
     }
 
     fun giveWater() = applyAction(PetEffect.WATER) { s ->
-        s.copy(
-            thirst = (s.thirst + 30).coerceAtMost(100.0),
-            growthExp = s.growthExp + if (s.thirst < 100.0) 6 else 2
-        )
+        s.copy(thirst = (s.thirst + 30).coerceAtMost(100.0))
     }
 
     fun play() = applyAction(PetEffect.PLAY) { s ->
         s.copy(
             happiness = (s.happiness + 25).coerceAtMost(100.0),
             hunger = (s.hunger - 5).coerceAtLeast(0.0),
-            thirst = (s.thirst - 5).coerceAtLeast(0.0),
-            growthExp = s.growthExp + 10
+            thirst = (s.thirst - 5).coerceAtLeast(0.0)
         )
     }
 
@@ -150,16 +143,14 @@ class PetRepository private constructor(context: Context) {
         s.copy(
             poopCount = 0,
             minutesTowardPoop = 0.0,
-            hygiene = (s.hygiene + 10).coerceAtMost(100.0),
-            growthExp = s.growthExp + 3
+            hygiene = (s.hygiene + 10).coerceAtMost(100.0)
         )
     }
 
     fun wash() = applyAction(PetEffect.WASH) { s ->
         s.copy(
             hygiene = 100.0,
-            happiness = (s.happiness + 5).coerceAtMost(100.0),
-            growthExp = s.growthExp + 4
+            happiness = (s.happiness + 5).coerceAtMost(100.0)
         )
     }
 
@@ -210,7 +201,7 @@ class PetRepository private constructor(context: Context) {
         if (elapsedMinutes <= 0.0) return
 
         if (stats.stage == PetStage.EGG) {
-            val grown = stats.copy(growthExp = stats.growthExp + elapsedMinutes, lastUpdateMillis = now)
+            val grown = stats.copy(growthExp = stats.growthExp + elapsedMinutes * GROWTH_EXP_PER_MIN, lastUpdateMillis = now)
             val hatched = advanceStageIfReady(grown)
             if (hatched.stage != PetStage.EGG) _effects.tryEmit(PetEffect.HATCH)
             save(hatched)
@@ -244,15 +235,22 @@ class PetRepository private constructor(context: Context) {
         if (newHygiene < 30.0) happinessPenalty += elapsedMinutes * 0.2
         val newHappiness = (stats.happiness - happinessPenalty).coerceAtLeast(0.0)
 
+        // Growth now advances purely with elapsed time (care actions only affect the four stats
+        // above), so a well-kept and a neglected pet of the same age are at the same stage.
+        val newGrowthExp = stats.growthExp + elapsedMinutes * GROWTH_EXP_PER_MIN
+
         save(
-            stats.copy(
-                hunger = newHunger,
-                thirst = newThirst,
-                happiness = newHappiness,
-                hygiene = newHygiene,
-                poopCount = newPoopCount,
-                minutesTowardPoop = minutesTowardPoop,
-                lastUpdateMillis = now
+            advanceStageIfReady(
+                stats.copy(
+                    hunger = newHunger,
+                    thirst = newThirst,
+                    happiness = newHappiness,
+                    hygiene = newHygiene,
+                    poopCount = newPoopCount,
+                    minutesTowardPoop = minutesTowardPoop,
+                    growthExp = newGrowthExp,
+                    lastUpdateMillis = now
+                )
             )
         )
     }
@@ -333,6 +331,8 @@ class PetRepository private constructor(context: Context) {
         private const val HYGIENE_DECAY_PER_MIN = 1.0 / 6.0
         private const val HAPPINESS_DECAY_PER_MIN = 1.0 / 5.0
         private const val MINUTES_PER_POOP = 15.0
+        /** Growth is purely time-based: 1 exp/minute, matching the egg's incubation pace. */
+        private const val GROWTH_EXP_PER_MIN = 1.0
 
         @Volatile private var instance: PetRepository? = null
 

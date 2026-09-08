@@ -60,11 +60,12 @@ class PetOverlayService : LifecycleService() {
     private var downRawY = 0f
     private var endingLaunched = false
 
-    // Touch-steering state: holding and moving points the pet toward the finger; releasing
-    // hands control straight back to free autonomous wandering.
-    private var isSteering = false
-    private var steerTargetX = 0f
-    private var steerTargetY = 0f
+    // Drag state: the window follows the finger 1:1 while held and moving, computed directly
+    // inside the touch event (not through the async wander loop, which would otherwise fight
+    // the gesture); releasing hands control straight back to free autonomous wandering.
+    private var isDragging = false
+    private var downParamX = 0
+    private var downParamY = 0
     private var longPressFired = false
     private val longPressRunnable = Runnable { onLongPress() }
 
@@ -152,35 +153,46 @@ class PetOverlayService : LifecycleService() {
 
     private fun handleTouch(event: MotionEvent): Boolean {
         val container = petContainer ?: return false
+        val params = petParams ?: return false
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
-                isSteering = false
+                isDragging = false
                 longPressFired = false
                 downRawX = event.rawX
                 downRawY = event.rawY
+                downParamX = params.x
+                downParamY = params.y
                 hideActionMenu()
                 container.postDelayed(longPressRunnable, LONG_PRESS_MS)
             }
             MotionEvent.ACTION_MOVE -> {
                 val dx = event.rawX - downRawX
                 val dy = event.rawY - downRawY
-                if (!isSteering && hypot(dx.toDouble(), dy.toDouble()) > dp(12)) {
-                    isSteering = true
+                if (!isDragging && hypot(dx.toDouble(), dy.toDouble()) > dp(12)) {
+                    isDragging = true
                     container.removeCallbacks(longPressRunnable)
                     hideActionMenu()
                 }
-                if (isSteering) {
+                if (isDragging) {
                     val screenW = resources.displayMetrics.widthPixels
                     val screenH = resources.displayMetrics.heightPixels
-                    steerTargetX = (event.rawX - petSizePx / 2f).coerceIn(0f, (screenW - petSizePx).toFloat())
-                    steerTargetY = (event.rawY - petSizePx / 2f).coerceIn(0f, (screenH - petSizePx).toFloat())
+                    val newX = (downParamX + dx).coerceIn(0f, (screenW - petSizePx).toFloat())
+                    val newY = (downParamY + dy).coerceIn(0f, (screenH - petSizePx).toFloat())
+                    params.x = newX.toInt()
+                    params.y = newY.toInt()
+                    currentX = newX
+                    currentY = newY
+                    runCatching { windowManager.updateViewLayout(container, params) }
+                    petView?.moveDirX = (dx / dp(80)).coerceIn(-1f, 1f)
+                    petView?.isWalking = true
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 container.removeCallbacks(longPressRunnable)
-                if (isSteering) {
+                if (isDragging) {
                     // Hand control straight back to free autonomous wandering from here.
-                    isSteering = false
+                    isDragging = false
+                    petView?.isWalking = false
                     pausedUntil = 0L
                     pickNewTarget()
                 } else if (!longPressFired) {
@@ -332,11 +344,13 @@ class PetOverlayService : LifecycleService() {
     }
 
     /**
-     * Moves the pet one frame closer to its target - either [steerTargetX]/[steerTargetY] while
-     * the user is actively steering it, or the autonomous wander target otherwise - always using
-     * the normal walk animation rather than teleporting.
+     * Moves the pet one frame closer to its autonomous wander target, using the normal walk
+     * animation rather than teleporting. Skipped entirely while the user is actively dragging it
+     * (that's handled synchronously in [handleTouch] instead, so the two never fight over
+     * [petParams]).
      */
     private fun stepWander(now: Long, dt: Float) {
+        if (isDragging) return
         val container = petContainer ?: return
         val params = petParams ?: return
         val stats = repository.currentStats()
@@ -344,26 +358,21 @@ class PetOverlayService : LifecycleService() {
             petView?.isWalking = false
             return
         }
-        if (!isSteering && now < pausedUntil) {
+        if (now < pausedUntil) {
             petView?.isWalking = false
             return
         }
-        val tx = if (isSteering) steerTargetX else targetX
-        val ty = if (isSteering) steerTargetY else targetY
-        val dx = tx - currentX
-        val dy = ty - currentY
+        val dx = targetX - currentX
+        val dy = targetY - currentY
         val distance = hypot(dx.toDouble(), dy.toDouble()).toFloat()
-        val speed = if (isSteering) STEER_SPEED_PX_PER_SEC else WANDER_SPEED_PX_PER_SEC
-        if (distance < speed * dt || distance < 4f) {
-            currentX = tx
-            currentY = ty
+        if (distance < WANDER_SPEED_PX_PER_SEC * dt || distance < 4f) {
+            currentX = targetX
+            currentY = targetY
             petView?.isWalking = false
-            if (!isSteering) {
-                pausedUntil = now + Random.nextLong(1200, 4000)
-                pickNewTarget()
-            }
+            pausedUntil = now + Random.nextLong(1200, 4000)
+            pickNewTarget()
         } else {
-            val step = speed * dt
+            val step = WANDER_SPEED_PX_PER_SEC * dt
             currentX += dx / distance * step
             currentY += dy / distance * step
             petView?.moveDirX = dx / distance
@@ -399,7 +408,6 @@ class PetOverlayService : LifecycleService() {
     companion object {
         private const val NOTIF_ID = 42
         private const val WANDER_SPEED_PX_PER_SEC = 90f
-        private const val STEER_SPEED_PX_PER_SEC = 220f
         private const val LONG_PRESS_MS = 350L
     }
 }
