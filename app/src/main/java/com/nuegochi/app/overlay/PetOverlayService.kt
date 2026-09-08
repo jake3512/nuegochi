@@ -56,28 +56,22 @@ class PetOverlayService : LifecycleService() {
     private var targetX = 0f
     private var targetY = 0f
     private var pausedUntil = 0L
-    private var isDragging = false
     private var downRawX = 0f
     private var downRawY = 0f
-    private var downParamX = 0
-    private var downParamY = 0
     private var endingLaunched = false
 
-    // Long-press-to-pet state.
-    private var isPetting = false
-    private val longPressRunnable = Runnable { startPetting() }
-    private val petTickRunnable = object : Runnable {
-        override fun run() {
-            if (!isPetting) return
-            repository.pet()
-            petContainer?.postDelayed(this, PET_TICK_MS)
-        }
-    }
+    // Touch-steering state: holding and moving points the pet toward the finger; releasing
+    // hands control straight back to free autonomous wandering.
+    private var isSteering = false
+    private var steerTargetX = 0f
+    private var steerTargetY = 0f
+    private var longPressFired = false
+    private val longPressRunnable = Runnable { onLongPress() }
 
     override fun onCreate() {
         super.onCreate()
         repository = PetRepository.get(this)
-        petSizePx = dp(120)
+        petSizePx = dp(84)
 
         // Must promote to foreground right away: the service may have been started via
         // startForegroundService(), which requires startForeground() within seconds or the
@@ -158,75 +152,66 @@ class PetOverlayService : LifecycleService() {
 
     private fun handleTouch(event: MotionEvent): Boolean {
         val container = petContainer ?: return false
-        val params = petParams ?: return false
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
-                isDragging = true
+                isSteering = false
+                longPressFired = false
                 downRawX = event.rawX
                 downRawY = event.rawY
-                downParamX = params.x
-                downParamY = params.y
                 hideActionMenu()
                 container.postDelayed(longPressRunnable, LONG_PRESS_MS)
             }
             MotionEvent.ACTION_MOVE -> {
                 val dx = event.rawX - downRawX
                 val dy = event.rawY - downRawY
-                if (isPetting) return true
-                if (hypot(dx.toDouble(), dy.toDouble()) > dp(12)) {
+                if (!isSteering && hypot(dx.toDouble(), dy.toDouble()) > dp(12)) {
+                    isSteering = true
                     container.removeCallbacks(longPressRunnable)
-                    petView?.isBeingDragged = true
+                    hideActionMenu()
                 }
-                params.x = (downParamX + dx).toInt()
-                params.y = (downParamY + dy).toInt()
-                runCatching { windowManager.updateViewLayout(container, params) }
-                currentX = params.x.toFloat()
-                currentY = params.y.toFloat()
+                if (isSteering) {
+                    val screenW = resources.displayMetrics.widthPixels
+                    val screenH = resources.displayMetrics.heightPixels
+                    steerTargetX = (event.rawX - petSizePx / 2f).coerceIn(0f, (screenW - petSizePx).toFloat())
+                    steerTargetY = (event.rawY - petSizePx / 2f).coerceIn(0f, (screenH - petSizePx).toFloat())
+                }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 container.removeCallbacks(longPressRunnable)
-                isDragging = false
-                petView?.isBeingDragged = false
-                if (isPetting) {
-                    stopPetting()
-                } else {
-                    val moved = hypot((event.rawX - downRawX).toDouble(), (event.rawY - downRawY).toDouble())
-                    if (moved < dp(12)) {
-                        onPetTapped(event.x, event.y)
-                    } else {
-                        pausedUntil = SystemClock.elapsedRealtime() + 800
-                    }
+                if (isSteering) {
+                    // Hand control straight back to free autonomous wandering from here.
+                    isSteering = false
+                    pausedUntil = 0L
+                    pickNewTarget()
+                } else if (!longPressFired) {
+                    onShortTap(event.x, event.y)
                 }
             }
         }
         return true
     }
 
-    private fun onPetTapped(x: Float, y: Float) {
+    /** A quick tap: a poke on a poop cleans it, otherwise it's a little one-shot affectionate reaction. */
+    private fun onShortTap(x: Float, y: Float) {
         val stats = repository.currentStats()
-        if (stats.stage == PetStage.EGG) return
         if (stats.stage == PetStage.COCOON) {
             openEndingIfNeeded(stats)
             return
         }
+        if (stats.stage == PetStage.EGG) return
         if (petView?.isPoopHit(x, y) == true) {
             repository.cleanPoop()
             return
         }
+        repository.pet()
+    }
+
+    /** Press and hold (without moving) opens the care menu instead of a quick tap reaction. */
+    private fun onLongPress() {
+        longPressFired = true
+        val stats = repository.currentStats()
+        if (stats.stage == PetStage.EGG || stats.stage == PetStage.COCOON) return
         showActionMenu()
-    }
-
-    /** Long-press-and-hold on the pet: pets it affectionately for as long as the finger stays down. */
-    private fun startPetting() {
-        if (isPetting) return
-        isPetting = true
-        hideActionMenu()
-        petTickRunnable.run()
-    }
-
-    private fun stopPetting() {
-        isPetting = false
-        petContainer?.removeCallbacks(petTickRunnable)
     }
 
     private fun showActionMenu() {
@@ -346,31 +331,42 @@ class PetOverlayService : LifecycleService() {
         }
     }
 
+    /**
+     * Moves the pet one frame closer to its target - either [steerTargetX]/[steerTargetY] while
+     * the user is actively steering it, or the autonomous wander target otherwise - always using
+     * the normal walk animation rather than teleporting.
+     */
     private fun stepWander(now: Long, dt: Float) {
         val container = petContainer ?: return
         val params = petParams ?: return
         val stats = repository.currentStats()
-        if (isDragging || !stats.stage.isMoving) {
+        if (!stats.stage.isMoving) {
             petView?.isWalking = false
             return
         }
-        if (now < pausedUntil) {
+        if (!isSteering && now < pausedUntil) {
             petView?.isWalking = false
             return
         }
-        val dx = targetX - currentX
-        val dy = targetY - currentY
+        val tx = if (isSteering) steerTargetX else targetX
+        val ty = if (isSteering) steerTargetY else targetY
+        val dx = tx - currentX
+        val dy = ty - currentY
         val distance = hypot(dx.toDouble(), dy.toDouble()).toFloat()
-        if (distance < WANDER_SPEED_PX_PER_SEC * dt || distance < 4f) {
-            currentX = targetX
-            currentY = targetY
+        val speed = if (isSteering) STEER_SPEED_PX_PER_SEC else WANDER_SPEED_PX_PER_SEC
+        if (distance < speed * dt || distance < 4f) {
+            currentX = tx
+            currentY = ty
             petView?.isWalking = false
-            pausedUntil = now + Random.nextLong(1200, 4000)
-            pickNewTarget()
+            if (!isSteering) {
+                pausedUntil = now + Random.nextLong(1200, 4000)
+                pickNewTarget()
+            }
         } else {
-            val step = WANDER_SPEED_PX_PER_SEC * dt
+            val step = speed * dt
             currentX += dx / distance * step
             currentY += dy / distance * step
+            petView?.moveDirX = dx / distance
             petView?.isWalking = true
         }
         val newX = currentX.toInt()
@@ -393,7 +389,6 @@ class PetOverlayService : LifecycleService() {
 
     override fun onDestroy() {
         petContainer?.removeCallbacks(longPressRunnable)
-        petContainer?.removeCallbacks(petTickRunnable)
         hideActionMenu()
         hideEffect()
         petContainer?.let { runCatching { windowManager.removeView(it) } }
@@ -404,7 +399,7 @@ class PetOverlayService : LifecycleService() {
     companion object {
         private const val NOTIF_ID = 42
         private const val WANDER_SPEED_PX_PER_SEC = 90f
+        private const val STEER_SPEED_PX_PER_SEC = 220f
         private const val LONG_PRESS_MS = 350L
-        private const val PET_TICK_MS = 380L
     }
 }

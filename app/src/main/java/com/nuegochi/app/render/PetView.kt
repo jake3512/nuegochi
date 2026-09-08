@@ -40,8 +40,8 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         }
 
     var isWalking: Boolean = false
-    /** True while the user is dragging the pet around - plays a struggling/flailing motion. */
-    var isBeingDragged: Boolean = false
+    /** -1(left)..1(right), the horizontal direction of travel while walking - drives a forward lean. */
+    var moveDirX: Float = 0f
     var poopCount: Int = 0
         set(value) {
             field = value
@@ -50,10 +50,14 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
 
     /** 0(exhausted)..1(full of energy), from hunger+thirst - slows and shrinks the idle bob. */
     var energyLevel: Float = 1f
+    /** 0(starving)..1(full) - drives a slouch/hanging-head posture that grows the emptier it is. */
+    var hungerLevel: Float = 1f
+    /** 0(parched)..1(hydrated) - drives a panting breath motion that grows the emptier it is. */
+    var thirstLevel: Float = 1f
     /** 0(sad)..1(delighted), from happiness - adds a droop when low, little happy hops when high. */
     var moodLevel: Float = 1f
-    /** True when hygiene is low or there's uncleaned poop - plays a periodic disgusted shiver. */
-    var isMessy: Boolean = false
+    /** 0(spotless)..1(filthy), from hygiene and uncleaned poop - shiver frequency/strength scale with it. */
+    var messyLevel: Float = 0f
 
     private var appearance: PetAppearance = PetAppearance.default()
 
@@ -61,9 +65,13 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
     fun applyStats(stats: PetStats) {
         stage = stats.stage
         poopCount = stats.poopCount
-        energyLevel = ((stats.hunger + stats.thirst) / 2f / PetStats.MAX_STAT).coerceIn(0f, 1f)
+        hungerLevel = (stats.hunger.toFloat() / PetStats.MAX_STAT).coerceIn(0f, 1f)
+        thirstLevel = (stats.thirst.toFloat() / PetStats.MAX_STAT).coerceIn(0f, 1f)
+        energyLevel = (hungerLevel + thirstLevel) / 2f
         moodLevel = (stats.happiness.toFloat() / PetStats.MAX_STAT).coerceIn(0f, 1f)
-        isMessy = stats.hygiene < 40 || stats.poopCount > 0
+        val hygieneDirt = 1f - (stats.hygiene.toFloat() / PetStats.MAX_STAT).coerceIn(0f, 1f)
+        val poopDirt = if (stats.poopCount > 0) 0.4f + 0.12f * stats.poopCount else 0f
+        messyLevel = (hygieneDirt.coerceAtLeast(poopDirt)).coerceIn(0f, 1f)
         invalidate()
     }
 
@@ -229,13 +237,38 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
     }
 
     /**
-     * Idle motion for a hatched, still-growing pet: bob speed/height track [energyLevel] (droopy
-     * and slow when hungry/thirsty, lively when well-fed), a slow tilt tracks [moodLevel] (a sad
-     * lean when unhappy, a little happy hop when delighted), and [isMessy] adds a periodic shiver.
+     * Idle motion for a hatched, still-growing pet. Layered on top of a per-[stage] personality
+     * (babies wobble more and settle less; adults are calmer and steadier):
+     * - bob speed/height track [energyLevel] (droopy/slow when hungry+thirsty, lively when full)
+     * - a slow tilt tracks [moodLevel] (a sad lean when unhappy, a little happy hop when delighted)
+     * - [hungerLevel] adds a permanent slouch/sagging posture the emptier it gets
+     * - [thirstLevel] adds a panting breath pulse the emptier it gets
+     * - [messyLevel] adds a shiver whose frequency and strength scale with how dirty it is
      */
     private fun drawStickFigureWithMotion(canvas: Canvas, size: Float, t: Long) {
+        val stageBobMul: Float
+        val stageWobbleDeg: Float
+        when (stage) {
+            PetStage.BABY -> {
+                stageBobMul = 1.35f
+                stageWobbleDeg = 5f
+            }
+            PetStage.CHILD -> {
+                stageBobMul = 1.15f
+                stageWobbleDeg = 2.5f
+            }
+            PetStage.ADULT -> {
+                stageBobMul = 0.8f
+                stageWobbleDeg = 0.4f
+            }
+            else -> { // TEEN and any fallback
+                stageBobMul = 1f
+                stageWobbleDeg = 1.2f
+            }
+        }
+
         val bobPeriod = lerp(2600f, 1200f, energyLevel)
-        val bobAmplitude = lerp(0.007f, 0.02f, energyLevel) * size
+        val bobAmplitude = lerp(0.007f, 0.02f, energyLevel) * size * stageBobMul
         var bob = sin(t % bobPeriod.toLong() / bobPeriod * TAU).toFloat() * bobAmplitude
 
         if (moodLevel > 0.6f) {
@@ -250,27 +283,40 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
             bob -= abs(sin(t % 900 / 900f * TAU)).toFloat() * size * 0.012f
         }
 
+        // Leans into the direction it's currently walking/steering toward.
+        val moveLean = if (isWalking) moveDirX.coerceIn(-1f, 1f) * 5f else 0f
+
+        // Slouches lower in its resting pose the hungrier it is.
+        bob += (1f - hungerLevel) * size * 0.035f
+
         val droopDegrees = (1f - moodLevel) * 6f
-        var tilt = sin(t % 2000 / 2000f * TAU).toFloat() * droopDegrees + reactionRotation
+        val stageWobble = sin(t % 2600 / 2600f * TAU).toFloat() * stageWobbleDeg
+        // A constant (non-oscillating) hunched lean that deepens the hungrier it is.
+        val hungerHunch = (1f - hungerLevel) * 5f
+        var tilt = sin(t % 2000 / 2000f * TAU).toFloat() * droopDegrees + stageWobble + hungerHunch + moveLean + reactionRotation
 
         var shakeX = 0f
-        if (isMessy) {
-            val shakePhase = (t % 2400L) / 2400f
-            if (shakePhase < 0.25f) {
-                shakeX = sin(shakePhase / 0.25f * TAU * 4f).toFloat() * size * 0.01f
+        if (messyLevel > 0.02f) {
+            val shakePeriod = lerp(3200f, 1000f, messyLevel)
+            val shakePhase = (t % shakePeriod.toLong()) / shakePeriod
+            val activeFraction = lerp(0.15f, 0.4f, messyLevel)
+            if (shakePhase < activeFraction) {
+                val shiverStrength = lerp(0.4f, 1.3f, messyLevel)
+                shakeX = sin(shakePhase / activeFraction * TAU * 4f).toFloat() * size * 0.01f * shiverStrength
             }
         }
 
-        if (isBeingDragged) {
-            // Struggling in mid-air: a fast wobble and side-to-side squirm on top of anything else.
-            tilt += sin(t % 220 / 220f * TAU).toFloat() * 9f
-            shakeX += sin(t % 170 / 170f * TAU).toFloat() * size * 0.02f
-        }
+        // A quick, shallow breathing pulse that gets more pronounced the thirstier it is.
+        val pantPulse = sin(t % 380 / 380f * TAU).toFloat() * (1f - thirstLevel) * 0.05f
 
         canvas.save()
         canvas.translate(shakeX, bob + reactionOffsetY * size)
         canvas.rotate(tilt, size / 2f, size * 0.4f)
-        canvas.scale(stage.scale * reactionScaleX, stage.scale * reactionScaleY, size / 2f, size / 2f)
+        canvas.scale(
+            stage.scale * reactionScaleX,
+            stage.scale * reactionScaleY * (1f + pantPulse),
+            size / 2f, size / 2f
+        )
         drawStickFigure(canvas, size, t)
         canvas.restore()
     }
@@ -279,26 +325,26 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
 
     /**
      * The stick figure skeleton. Limbs pivot at their attachment point and swing during
-     * [isWalking] (or flail rapidly while [isBeingDragged]); their resting length is scaled by
-     * the corresponding [appearance] value.
+     * [isWalking]; their resting length is scaled by the corresponding [appearance] value.
      */
     private fun drawStickFigure(canvas: Canvas, size: Float, t: Long) {
-        val legSwing: Float
-        val armSwing: Float
-        when {
-            isBeingDragged -> {
-                // A frantic, out-of-sync flail - legs and arms kick at different phases.
-                legSwing = sin(t % 240 / 240f * TAU).toFloat() * 30f
-                armSwing = sin((t + 120) % 240 / 240f * TAU).toFloat() * 34f
-            }
-            isWalking -> {
-                val walkT = sin(t % 900 / 900f * TAU).toFloat()
-                legSwing = walkT * 16f
-                armSwing = walkT * 16f
-            }
-            else -> {
-                legSwing = 0f
-                armSwing = 0f
+        var legSwing: Float
+        var armSwing: Float
+        if (isWalking) {
+            val walkT = sin(t % 900 / 900f * TAU).toFloat()
+            legSwing = walkT * 16f
+            armSwing = walkT * 16f
+        } else {
+            legSwing = 0f
+            armSwing = 0f
+        }
+
+        // A tired stretch: arms swing wide and hold briefly when energy is very low.
+        if (energyLevel < 0.25f) {
+            val stretchPeriod = 4000L
+            val stretchPhase = (t % stretchPeriod) / stretchPeriod.toFloat()
+            if (stretchPhase < 0.3f) {
+                armSwing += sin((stretchPhase / 0.3f).coerceIn(0f, 1f) * Math.PI.toFloat()) * 38f
             }
         }
         val limbWidth = size * 0.045f
@@ -310,17 +356,19 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         val shoulderY = size * 0.36f
         val hipY = size * 0.60f
 
-        // Legs.
+        // Legs (knee bends more the harder the leg is swinging, for a natural walking/kicking bend).
         val legLen = size * 0.30f * appearance.legLength
+        val legBend = 10f + abs(legSwing) * 0.55f
         shapePaint.color = appearance.legColor
-        drawLimb(canvas, headCx, hipY, legLen, limbWidth, restAngle = 18f, swingDegrees = legSwing, sign = 1f)
-        drawLimb(canvas, headCx, hipY, legLen, limbWidth, restAngle = 18f, swingDegrees = legSwing, sign = -1f)
+        drawLimb(canvas, headCx, hipY, legLen, limbWidth, restAngle = 18f, swingDegrees = legSwing, sign = 1f, jointBend = legBend)
+        drawLimb(canvas, headCx, hipY, legLen, limbWidth, restAngle = 18f, swingDegrees = legSwing, sign = -1f, jointBend = legBend)
 
-        // Arms.
+        // Arms (elbow bends the same way).
         val armLen = size * 0.24f * appearance.armLength
+        val armBend = 14f + abs(armSwing) * 0.45f
         shapePaint.color = appearance.armColor
-        drawLimb(canvas, headCx, shoulderY, armLen, limbWidth, restAngle = 30f, swingDegrees = armSwing, sign = 1f)
-        drawLimb(canvas, headCx, shoulderY, armLen, limbWidth, restAngle = 30f, swingDegrees = armSwing, sign = -1f)
+        drawLimb(canvas, headCx, shoulderY, armLen, limbWidth, restAngle = 30f, swingDegrees = armSwing, sign = 1f, jointBend = armBend)
+        drawLimb(canvas, headCx, shoulderY, armLen, limbWidth, restAngle = 30f, swingDegrees = armSwing, sign = -1f, jointBend = armBend)
 
         // Body (spine from neck to hip).
         shapePaint.style = Paint.Style.STROKE
@@ -335,11 +383,18 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         shapePaint.color = Color.parseColor("#2A1E18")
         val eyeOffset = headRadius * 0.4f
         val eyeY = headCy - headRadius * 0.05f
-        canvas.drawCircle(headCx - eyeOffset, eyeY, headRadius * 0.11f, shapePaint)
-        canvas.drawCircle(headCx + eyeOffset, eyeY, headRadius * 0.11f, shapePaint)
+        // A quick periodic blink for a bit of idle life.
+        val blinkPhase = t % 2600L
+        val eyeRadius = if (blinkPhase < 120L) headRadius * 0.02f else headRadius * 0.11f
+        canvas.drawCircle(headCx - eyeOffset, eyeY, eyeRadius, shapePaint)
+        canvas.drawCircle(headCx + eyeOffset, eyeY, eyeRadius, shapePaint)
     }
 
-    /** Draws one limb as a straight line pivoting at ([pivotX], [pivotY]), leaning outward by [sign]. */
+    /**
+     * Draws one limb as two jointed segments (upper + lower, like an arm/forearm or thigh/shin)
+     * pivoting at ([pivotX], [pivotY]) and leaning outward by [sign]. [jointBend] bends the lower
+     * segment relative to the upper one at the elbow/knee, so the limb never looks ramrod-straight.
+     */
     private fun drawLimb(
         canvas: Canvas,
         pivotX: Float,
@@ -348,14 +403,20 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         width: Float,
         restAngle: Float,
         swingDegrees: Float,
-        sign: Float
+        sign: Float,
+        jointBend: Float
     ) {
         shapePaint.style = Paint.Style.STROKE
         shapePaint.strokeWidth = width
+        val upperLen = length * 0.52f
+        val lowerLen = length - upperLen
         canvas.save()
         canvas.translate(pivotX, pivotY)
         canvas.rotate((restAngle + swingDegrees) * sign)
-        canvas.drawLine(0f, 0f, 0f, length, shapePaint)
+        canvas.drawLine(0f, 0f, 0f, upperLen, shapePaint)
+        canvas.translate(0f, upperLen)
+        canvas.rotate(jointBend * sign)
+        canvas.drawLine(0f, 0f, 0f, lowerLen, shapePaint)
         canvas.restore()
     }
 

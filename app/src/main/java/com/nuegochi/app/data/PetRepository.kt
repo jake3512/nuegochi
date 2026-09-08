@@ -29,6 +29,8 @@ class PetRepository private constructor(context: Context) {
         val happiness: Double,
         val hygiene: Double,
         val poopCount: Int,
+        /** Fractional minutes accumulated toward the next poop - not lost between short ticks. */
+        val minutesTowardPoop: Double,
         val growthExp: Double,
         val lastUpdateMillis: Long,
         val endingShown: Boolean
@@ -106,6 +108,7 @@ class PetRepository private constructor(context: Context) {
             happiness = 80.0,
             hygiene = 100.0,
             poopCount = 0,
+            minutesTowardPoop = 0.0,
             growthExp = 0.0,
             lastUpdateMillis = System.currentTimeMillis(),
             endingShown = false
@@ -146,6 +149,7 @@ class PetRepository private constructor(context: Context) {
         if (s.poopCount == 0) return@applyAction s
         s.copy(
             poopCount = 0,
+            minutesTowardPoop = 0.0,
             hygiene = (s.hygiene + 10).coerceAtMost(100.0),
             growthExp = s.growthExp + 3
         )
@@ -222,8 +226,15 @@ class PetRepository private constructor(context: Context) {
         val newThirst = (stats.thirst - elapsedMinutes * THIRST_DECAY_PER_MIN).coerceAtLeast(0.0)
         val newHygieneFromTime = (stats.hygiene - elapsedMinutes * HYGIENE_DECAY_PER_MIN).coerceAtLeast(0.0)
 
-        val newPoopCount = (stats.poopCount + (elapsedMinutes / MINUTES_PER_POOP).toInt())
-            .coerceAtMost(PetStats.MAX_POOP)
+        // Accumulate fractional minutes toward the next poop so short, frequent ticks (e.g. the
+        // overlay's 30s ticker) still add up correctly instead of each one truncating to zero.
+        var minutesTowardPoop = stats.minutesTowardPoop + elapsedMinutes
+        var newPoopCount = stats.poopCount
+        while (minutesTowardPoop >= MINUTES_PER_POOP && newPoopCount < PetStats.MAX_POOP) {
+            minutesTowardPoop -= MINUTES_PER_POOP
+            newPoopCount++
+        }
+        if (newPoopCount >= PetStats.MAX_POOP) minutesTowardPoop = 0.0
         val newPoops = newPoopCount - stats.poopCount
         val newHygiene = (newHygieneFromTime - newPoops * 5).coerceAtLeast(0.0)
 
@@ -240,6 +251,7 @@ class PetRepository private constructor(context: Context) {
                 happiness = newHappiness,
                 hygiene = newHygiene,
                 poopCount = newPoopCount,
+                minutesTowardPoop = minutesTowardPoop,
                 lastUpdateMillis = now
             )
         )
@@ -254,6 +266,7 @@ class PetRepository private constructor(context: Context) {
             happiness = 80.0,
             hygiene = 100.0,
             poopCount = 0,
+            minutesTowardPoop = 0.0,
             growthExp = 0.0,
             lastUpdateMillis = System.currentTimeMillis(),
             endingShown = false
@@ -267,6 +280,7 @@ class PetRepository private constructor(context: Context) {
             happiness = prefs.getFloat(KEY_HAPPINESS, 80f).toDouble(),
             hygiene = prefs.getFloat(KEY_HYGIENE, 100f).toDouble(),
             poopCount = prefs.getInt(KEY_POOP, 0),
+            minutesTowardPoop = prefs.getFloat(KEY_MINUTES_TOWARD_POOP, 0f).toDouble(),
             growthExp = prefs.getFloat(KEY_EXP, 0f).toDouble(),
             lastUpdateMillis = prefs.getLong(KEY_LAST_UPDATE, System.currentTimeMillis()),
             endingShown = prefs.getBoolean(KEY_ENDING_SHOWN, false)
@@ -283,6 +297,7 @@ class PetRepository private constructor(context: Context) {
             .putFloat(KEY_HAPPINESS, stats.happiness.toFloat())
             .putFloat(KEY_HYGIENE, stats.hygiene.toFloat())
             .putInt(KEY_POOP, stats.poopCount)
+            .putFloat(KEY_MINUTES_TOWARD_POOP, stats.minutesTowardPoop.toFloat())
             .putFloat(KEY_EXP, stats.growthExp.toFloat())
             .putLong(KEY_LAST_UPDATE, stats.lastUpdateMillis)
             .putBoolean(KEY_ENDING_SHOWN, stats.endingShown)
@@ -298,6 +313,7 @@ class PetRepository private constructor(context: Context) {
         private const val KEY_HAPPINESS = "pet_happiness"
         private const val KEY_HYGIENE = "pet_hygiene"
         private const val KEY_POOP = "pet_poop"
+        private const val KEY_MINUTES_TOWARD_POOP = "pet_minutes_toward_poop"
         private const val KEY_EXP = "pet_exp"
         private const val KEY_LAST_UPDATE = "pet_last_update"
         private const val KEY_ENDING_SHOWN = "pet_ending_shown"
