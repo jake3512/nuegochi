@@ -56,17 +56,23 @@ class PetOverlayService : LifecycleService() {
     private var targetX = 0f
     private var targetY = 0f
     private var pausedUntil = 0L
-    private var isDragging = false
     private var downRawX = 0f
     private var downRawY = 0f
+    private var endingLaunched = false
+
+    // Drag state: the window follows the finger 1:1 while held and moving, computed directly
+    // inside the touch event (not through the async wander loop, which would otherwise fight
+    // the gesture); releasing hands control straight back to free autonomous wandering.
+    private var isDragging = false
     private var downParamX = 0
     private var downParamY = 0
-    private var endingLaunched = false
+    private var longPressFired = false
+    private val longPressRunnable = Runnable { onLongPress() }
 
     override fun onCreate() {
         super.onCreate()
         repository = PetRepository.get(this)
-        petSizePx = dp(120)
+        petSizePx = dp(84)
 
         // Must promote to foreground right away: the service may have been started via
         // startForegroundService(), which requires startForeground() within seconds or the
@@ -141,6 +147,7 @@ class PetOverlayService : LifecycleService() {
         windowManager.addView(container, params)
 
         container.setOnTouchListener { _, event -> handleTouch(event) }
+        view.applyAppearance(repository.currentAppearance())
         view.applyStats(repository.currentStats())
     }
 
@@ -149,42 +156,73 @@ class PetOverlayService : LifecycleService() {
         val params = petParams ?: return false
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
-                isDragging = true
+                isDragging = false
+                longPressFired = false
                 downRawX = event.rawX
                 downRawY = event.rawY
                 downParamX = params.x
                 downParamY = params.y
                 hideActionMenu()
+                container.postDelayed(longPressRunnable, LONG_PRESS_MS)
             }
             MotionEvent.ACTION_MOVE -> {
                 val dx = event.rawX - downRawX
                 val dy = event.rawY - downRawY
-                params.x = (downParamX + dx).toInt()
-                params.y = (downParamY + dy).toInt()
-                runCatching { windowManager.updateViewLayout(container, params) }
-                currentX = params.x.toFloat()
-                currentY = params.y.toFloat()
+                if (!isDragging && hypot(dx.toDouble(), dy.toDouble()) > dp(12)) {
+                    isDragging = true
+                    container.removeCallbacks(longPressRunnable)
+                    hideActionMenu()
+                }
+                if (isDragging) {
+                    val screenW = resources.displayMetrics.widthPixels
+                    val screenH = resources.displayMetrics.heightPixels
+                    val newX = (downParamX + dx).coerceIn(0f, (screenW - petSizePx).toFloat())
+                    val newY = (downParamY + dy).coerceIn(0f, (screenH - petSizePx).toFloat())
+                    params.x = newX.toInt()
+                    params.y = newY.toInt()
+                    currentX = newX
+                    currentY = newY
+                    runCatching { windowManager.updateViewLayout(container, params) }
+                    petView?.moveDirX = (dx / dp(80)).coerceIn(-1f, 1f)
+                    petView?.isWalking = true
+                }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                isDragging = false
-                val moved = hypot((event.rawX - downRawX).toDouble(), (event.rawY - downRawY).toDouble())
-                if (moved < dp(12)) {
-                    onPetTapped()
-                } else {
-                    pausedUntil = SystemClock.elapsedRealtime() + 800
+                container.removeCallbacks(longPressRunnable)
+                if (isDragging) {
+                    // Hand control straight back to free autonomous wandering from here.
+                    isDragging = false
+                    petView?.isWalking = false
+                    pausedUntil = 0L
+                    pickNewTarget()
+                } else if (!longPressFired) {
+                    onShortTap(event.x, event.y)
                 }
             }
         }
         return true
     }
 
-    private fun onPetTapped() {
+    /** A quick tap: a poke on a poop cleans it, otherwise it's a little one-shot affectionate reaction. */
+    private fun onShortTap(x: Float, y: Float) {
         val stats = repository.currentStats()
-        if (stats.stage == PetStage.EGG) return
         if (stats.stage == PetStage.COCOON) {
             openEndingIfNeeded(stats)
             return
         }
+        if (stats.stage == PetStage.EGG) return
+        if (petView?.isPoopHit(x, y) == true) {
+            repository.cleanPoop()
+            return
+        }
+        repository.pet()
+    }
+
+    /** Press and hold (without moving) opens the care menu instead of a quick tap reaction. */
+    private fun onLongPress() {
+        longPressFired = true
+        val stats = repository.currentStats()
+        if (stats.stage == PetStage.EGG || stats.stage == PetStage.COCOON) return
         showActionMenu()
     }
 
@@ -305,11 +343,18 @@ class PetOverlayService : LifecycleService() {
         }
     }
 
+    /**
+     * Moves the pet one frame closer to its autonomous wander target, using the normal walk
+     * animation rather than teleporting. Skipped entirely while the user is actively dragging it
+     * (that's handled synchronously in [handleTouch] instead, so the two never fight over
+     * [petParams]).
+     */
     private fun stepWander(now: Long, dt: Float) {
+        if (isDragging) return
         val container = petContainer ?: return
         val params = petParams ?: return
         val stats = repository.currentStats()
-        if (isDragging || !stats.stage.isMoving) {
+        if (!stats.stage.isMoving) {
             petView?.isWalking = false
             return
         }
@@ -330,6 +375,7 @@ class PetOverlayService : LifecycleService() {
             val step = WANDER_SPEED_PX_PER_SEC * dt
             currentX += dx / distance * step
             currentY += dy / distance * step
+            petView?.moveDirX = dx / distance
             petView?.isWalking = true
         }
         val newX = currentX.toInt()
@@ -351,6 +397,7 @@ class PetOverlayService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        petContainer?.removeCallbacks(longPressRunnable)
         hideActionMenu()
         hideEffect()
         petContainer?.let { runCatching { windowManager.removeView(it) } }
@@ -361,5 +408,6 @@ class PetOverlayService : LifecycleService() {
     companion object {
         private const val NOTIF_ID = 42
         private const val WANDER_SPEED_PX_PER_SEC = 90f
+        private const val LONG_PRESS_MS = 350L
     }
 }

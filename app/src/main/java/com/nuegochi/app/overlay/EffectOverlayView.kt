@@ -26,7 +26,11 @@ class EffectOverlayView(context: Context) : View(context) {
         this.effect = effect
         animator?.cancel()
         animator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = if (effect == PetEffect.EVOLVE || effect == PetEffect.COCOON || effect == PetEffect.HATCH) 1500 else 950
+            duration = when (effect) {
+                PetEffect.EVOLVE, PetEffect.COCOON, PetEffect.HATCH -> 1500L
+                PetEffect.PET -> 500L
+                else -> 950L
+            }
             interpolator = LinearInterpolator()
             addUpdateListener {
                 progress = it.animatedValue as Float
@@ -57,6 +61,7 @@ class EffectOverlayView(context: Context) : View(context) {
             PetEffect.PLAY -> drawRising(canvas, w, h, count = 6, color = Color.parseColor("#F06FA0"), heart = true)
             PetEffect.CLEAN -> drawSparkle(canvas, w, h, color = Color.parseColor("#FFD24C"))
             PetEffect.WASH -> drawRising(canvas, w, h, count = 7, color = Color.parseColor("#8FD8F2"), heart = false)
+            PetEffect.PET -> drawRising(canvas, w, h, count = 2, color = Color.parseColor("#F49AC1"), heart = true)
             PetEffect.HATCH, PetEffect.EVOLVE, PetEffect.COCOON ->
                 drawBurst(canvas, w, h, color = Color.parseColor("#F4C542"))
         }

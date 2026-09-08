@@ -2,7 +2,6 @@ package com.nuegochi.app.data
 
 import android.content.Context
 import android.content.SharedPreferences
-import java.io.File
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,6 +29,8 @@ class PetRepository private constructor(context: Context) {
         val happiness: Double,
         val hygiene: Double,
         val poopCount: Int,
+        /** Fractional minutes accumulated toward the next poop - not lost between short ticks. */
+        val minutesTowardPoop: Double,
         val growthExp: Double,
         val lastUpdateMillis: Long,
         val endingShown: Boolean
@@ -72,17 +73,32 @@ class PetRepository private constructor(context: Context) {
         applyDecay()
     }
 
-    fun partFile(part: PetPart): File = File(appContext.filesDir, part.fileName)
+    fun currentAppearance(): PetAppearance = PetAppearance(
+        headColor = prefs.getInt(KEY_HEAD_COLOR, DEFAULT_APPEARANCE.headColor),
+        bodyColor = prefs.getInt(KEY_BODY_COLOR, DEFAULT_APPEARANCE.bodyColor),
+        armColor = prefs.getInt(KEY_ARM_COLOR, DEFAULT_APPEARANCE.armColor),
+        legColor = prefs.getInt(KEY_LEG_COLOR, DEFAULT_APPEARANCE.legColor),
+        armLength = prefs.getFloat(KEY_ARM_LENGTH, DEFAULT_APPEARANCE.armLength),
+        legLength = prefs.getFloat(KEY_LEG_LENGTH, DEFAULT_APPEARANCE.legLength)
+    )
 
-    fun hasAllParts(): Boolean = PetPart.entries.all { partFile(it).exists() }
+    fun saveAppearance(appearance: PetAppearance) {
+        prefs.edit()
+            .putInt(KEY_HEAD_COLOR, appearance.headColor)
+            .putInt(KEY_BODY_COLOR, appearance.bodyColor)
+            .putInt(KEY_ARM_COLOR, appearance.armColor)
+            .putInt(KEY_LEG_COLOR, appearance.legColor)
+            .putFloat(KEY_ARM_LENGTH, appearance.armLength)
+            .putFloat(KEY_LEG_LENGTH, appearance.legLength)
+            .apply()
+    }
 
-    /** Wipes any previous pet's drawn parts and stats. Call once, right before a fresh creation flow starts. */
+    /** Wipes any previous pet's appearance and stats. Call once, right before a fresh creation flow starts. */
     fun prepareForNewPetCreation() {
-        PetPart.entries.forEach { partFile(it).delete() }
         prefs.edit().clear().apply()
     }
 
-    /** Call after the user has drawn their parts and chosen a name to actually start raising the pet. */
+    /** Call after the user has picked an appearance and name to actually start raising the pet. */
     fun finalizeNewPet(name: String) {
         save(Precise(
             name = name.trim().ifBlank { "누에" },
@@ -92,6 +108,7 @@ class PetRepository private constructor(context: Context) {
             happiness = 80.0,
             hygiene = 100.0,
             poopCount = 0,
+            minutesTowardPoop = 0.0,
             growthExp = 0.0,
             lastUpdateMillis = System.currentTimeMillis(),
             endingShown = false
@@ -106,25 +123,18 @@ class PetRepository private constructor(context: Context) {
     }
 
     fun feed() = applyAction(PetEffect.FEED) { s ->
-        s.copy(
-            hunger = (s.hunger + 30).coerceAtMost(100.0),
-            growthExp = s.growthExp + if (s.hunger < 100.0) 8 else 2
-        )
+        s.copy(hunger = (s.hunger + 30).coerceAtMost(100.0))
     }
 
     fun giveWater() = applyAction(PetEffect.WATER) { s ->
-        s.copy(
-            thirst = (s.thirst + 30).coerceAtMost(100.0),
-            growthExp = s.growthExp + if (s.thirst < 100.0) 6 else 2
-        )
+        s.copy(thirst = (s.thirst + 30).coerceAtMost(100.0))
     }
 
     fun play() = applyAction(PetEffect.PLAY) { s ->
         s.copy(
             happiness = (s.happiness + 25).coerceAtMost(100.0),
             hunger = (s.hunger - 5).coerceAtLeast(0.0),
-            thirst = (s.thirst - 5).coerceAtLeast(0.0),
-            growthExp = s.growthExp + 10
+            thirst = (s.thirst - 5).coerceAtLeast(0.0)
         )
     }
 
@@ -132,17 +142,21 @@ class PetRepository private constructor(context: Context) {
         if (s.poopCount == 0) return@applyAction s
         s.copy(
             poopCount = 0,
-            hygiene = (s.hygiene + 10).coerceAtMost(100.0),
-            growthExp = s.growthExp + 3
+            minutesTowardPoop = 0.0,
+            hygiene = (s.hygiene + 10).coerceAtMost(100.0)
         )
     }
 
     fun wash() = applyAction(PetEffect.WASH) { s ->
         s.copy(
             hygiene = 100.0,
-            happiness = (s.happiness + 5).coerceAtMost(100.0),
-            growthExp = s.growthExp + 4
+            happiness = (s.happiness + 5).coerceAtMost(100.0)
         )
+    }
+
+    /** A quick affectionate stroke - a small mood bump with no growth exp, meant to be repeatable. */
+    fun pet() = applyAction(PetEffect.PET) { s ->
+        s.copy(happiness = (s.happiness + 2).coerceAtMost(100.0))
     }
 
     fun markEndingShown() {
@@ -187,7 +201,7 @@ class PetRepository private constructor(context: Context) {
         if (elapsedMinutes <= 0.0) return
 
         if (stats.stage == PetStage.EGG) {
-            val grown = stats.copy(growthExp = stats.growthExp + elapsedMinutes, lastUpdateMillis = now)
+            val grown = stats.copy(growthExp = stats.growthExp + elapsedMinutes * GROWTH_EXP_PER_MIN, lastUpdateMillis = now)
             val hatched = advanceStageIfReady(grown)
             if (hatched.stage != PetStage.EGG) _effects.tryEmit(PetEffect.HATCH)
             save(hatched)
@@ -203,8 +217,15 @@ class PetRepository private constructor(context: Context) {
         val newThirst = (stats.thirst - elapsedMinutes * THIRST_DECAY_PER_MIN).coerceAtLeast(0.0)
         val newHygieneFromTime = (stats.hygiene - elapsedMinutes * HYGIENE_DECAY_PER_MIN).coerceAtLeast(0.0)
 
-        val newPoopCount = (stats.poopCount + (elapsedMinutes / MINUTES_PER_POOP).toInt())
-            .coerceAtMost(PetStats.MAX_POOP)
+        // Accumulate fractional minutes toward the next poop so short, frequent ticks (e.g. the
+        // overlay's 30s ticker) still add up correctly instead of each one truncating to zero.
+        var minutesTowardPoop = stats.minutesTowardPoop + elapsedMinutes
+        var newPoopCount = stats.poopCount
+        while (minutesTowardPoop >= MINUTES_PER_POOP && newPoopCount < PetStats.MAX_POOP) {
+            minutesTowardPoop -= MINUTES_PER_POOP
+            newPoopCount++
+        }
+        if (newPoopCount >= PetStats.MAX_POOP) minutesTowardPoop = 0.0
         val newPoops = newPoopCount - stats.poopCount
         val newHygiene = (newHygieneFromTime - newPoops * 5).coerceAtLeast(0.0)
 
@@ -214,14 +235,22 @@ class PetRepository private constructor(context: Context) {
         if (newHygiene < 30.0) happinessPenalty += elapsedMinutes * 0.2
         val newHappiness = (stats.happiness - happinessPenalty).coerceAtLeast(0.0)
 
+        // Growth now advances purely with elapsed time (care actions only affect the four stats
+        // above), so a well-kept and a neglected pet of the same age are at the same stage.
+        val newGrowthExp = stats.growthExp + elapsedMinutes * GROWTH_EXP_PER_MIN
+
         save(
-            stats.copy(
-                hunger = newHunger,
-                thirst = newThirst,
-                happiness = newHappiness,
-                hygiene = newHygiene,
-                poopCount = newPoopCount,
-                lastUpdateMillis = now
+            advanceStageIfReady(
+                stats.copy(
+                    hunger = newHunger,
+                    thirst = newThirst,
+                    happiness = newHappiness,
+                    hygiene = newHygiene,
+                    poopCount = newPoopCount,
+                    minutesTowardPoop = minutesTowardPoop,
+                    growthExp = newGrowthExp,
+                    lastUpdateMillis = now
+                )
             )
         )
     }
@@ -235,6 +264,7 @@ class PetRepository private constructor(context: Context) {
             happiness = 80.0,
             hygiene = 100.0,
             poopCount = 0,
+            minutesTowardPoop = 0.0,
             growthExp = 0.0,
             lastUpdateMillis = System.currentTimeMillis(),
             endingShown = false
@@ -248,6 +278,7 @@ class PetRepository private constructor(context: Context) {
             happiness = prefs.getFloat(KEY_HAPPINESS, 80f).toDouble(),
             hygiene = prefs.getFloat(KEY_HYGIENE, 100f).toDouble(),
             poopCount = prefs.getInt(KEY_POOP, 0),
+            minutesTowardPoop = prefs.getFloat(KEY_MINUTES_TOWARD_POOP, 0f).toDouble(),
             growthExp = prefs.getFloat(KEY_EXP, 0f).toDouble(),
             lastUpdateMillis = prefs.getLong(KEY_LAST_UPDATE, System.currentTimeMillis()),
             endingShown = prefs.getBoolean(KEY_ENDING_SHOWN, false)
@@ -264,6 +295,7 @@ class PetRepository private constructor(context: Context) {
             .putFloat(KEY_HAPPINESS, stats.happiness.toFloat())
             .putFloat(KEY_HYGIENE, stats.hygiene.toFloat())
             .putInt(KEY_POOP, stats.poopCount)
+            .putFloat(KEY_MINUTES_TOWARD_POOP, stats.minutesTowardPoop.toFloat())
             .putFloat(KEY_EXP, stats.growthExp.toFloat())
             .putLong(KEY_LAST_UPDATE, stats.lastUpdateMillis)
             .putBoolean(KEY_ENDING_SHOWN, stats.endingShown)
@@ -279,16 +311,28 @@ class PetRepository private constructor(context: Context) {
         private const val KEY_HAPPINESS = "pet_happiness"
         private const val KEY_HYGIENE = "pet_hygiene"
         private const val KEY_POOP = "pet_poop"
+        private const val KEY_MINUTES_TOWARD_POOP = "pet_minutes_toward_poop"
         private const val KEY_EXP = "pet_exp"
         private const val KEY_LAST_UPDATE = "pet_last_update"
         private const val KEY_ENDING_SHOWN = "pet_ending_shown"
         private const val KEY_OVERLAY_ENABLED = "overlay_enabled"
+
+        private const val KEY_HEAD_COLOR = "appearance_head_color"
+        private const val KEY_BODY_COLOR = "appearance_body_color"
+        private const val KEY_ARM_COLOR = "appearance_arm_color"
+        private const val KEY_LEG_COLOR = "appearance_leg_color"
+        private const val KEY_ARM_LENGTH = "appearance_arm_length"
+        private const val KEY_LEG_LENGTH = "appearance_leg_length"
+
+        private val DEFAULT_APPEARANCE = PetAppearance.default()
 
         private const val HUNGER_DECAY_PER_MIN = 1.0 / 3.0
         private const val THIRST_DECAY_PER_MIN = 1.0 / 4.0
         private const val HYGIENE_DECAY_PER_MIN = 1.0 / 6.0
         private const val HAPPINESS_DECAY_PER_MIN = 1.0 / 5.0
         private const val MINUTES_PER_POOP = 15.0
+        /** Growth is purely time-based: 1 exp/minute, matching the egg's incubation pace. */
+        private const val GROWTH_EXP_PER_MIN = 1.0
 
         @Volatile private var instance: PetRepository? = null
 

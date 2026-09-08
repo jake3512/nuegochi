@@ -7,34 +7,34 @@ import android.os.Bundle
 import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.SeekBar
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.nuegochi.app.R
-import com.nuegochi.app.data.PetPart
+import com.nuegochi.app.data.BodyPart
+import com.nuegochi.app.data.PetAppearance
 import com.nuegochi.app.data.PetRepository
 import com.nuegochi.app.data.PetStage
 import com.nuegochi.app.databinding.ActivityPetCreatorBinding
-import com.nuegochi.app.draw.BitmapIO
-import com.nuegochi.app.draw.GuideShape
-import com.nuegochi.app.draw.PatternPreset
 
 /**
- * Walks the user through hand-drawing every body part one at a time, then lets them name
- * the finished pet before handing off to [MainActivity].
+ * A one-screen stick-figure customizer: pick a body part, color it from the palette, adjust
+ * arm/leg length with the sliders, then name the pet and start raising it.
  */
 class PetCreatorActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityPetCreatorBinding
     private lateinit var repository: PetRepository
 
-    private val parts = PetPart.creationOrder
-    private var partIndex = 0
+    private var appearance = PetAppearance.default()
+    private var selectedPart = BodyPart.HEAD
+    private val partChips = mutableMapOf<BodyPart, Button>()
 
     private val palette = intArrayOf(
-        Color.parseColor("#1A1210"), Color.parseColor("#FFFFFF"), Color.parseColor("#F25C54"),
-        Color.parseColor("#F2A65A"), Color.parseColor("#F4D35E"), Color.parseColor("#8FC93A"),
-        Color.parseColor("#3EA6A0"), Color.parseColor("#3E9DE0"), Color.parseColor("#6C5CE7"),
-        Color.parseColor("#EC6FBB"), Color.parseColor("#8B5E34"), Color.parseColor("#A0A0A0")
+        Color.parseColor("#4A3728"), Color.parseColor("#1A1210"), Color.parseColor("#FFFFFF"),
+        Color.parseColor("#F25C54"), Color.parseColor("#F2A65A"), Color.parseColor("#F4D35E"),
+        Color.parseColor("#8FC93A"), Color.parseColor("#3EA6A0"), Color.parseColor("#3E9DE0"),
+        Color.parseColor("#6C5CE7"), Color.parseColor("#EC6FBB"), Color.parseColor("#A0A0A0")
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,18 +44,44 @@ class PetCreatorActivity : AppCompatActivity() {
         repository = PetRepository.get(this)
         repository.prepareForNewPetCreation()
 
+        binding.previewPetView.stage = PetStage.BABY
+        buildPartSelector()
         buildPalette()
-        buildPatternRow()
-        setupBrushControls()
-        setupNavigation()
-        showPart(0)
+        setupLengthSliders()
+        refreshPreview()
+
+        binding.startButton.setOnClickListener { finishCreation() }
+    }
+
+    private fun buildPartSelector() {
+        binding.partSelectorRow.removeAllViews()
+        val marginPx = (6 * resources.displayMetrics.density).toInt()
+        BodyPart.entries.forEach { part ->
+            val chip = Button(this, null, android.R.attr.buttonStyleSmall).apply {
+                text = part.displayName
+                setAllCaps(false)
+                alpha = if (part == selectedPart) 1f else 0.55f
+                setOnClickListener { selectPart(part) }
+            }
+            partChips[part] = chip
+            val params = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { marginEnd = marginPx }
+            binding.partSelectorRow.addView(chip, params)
+        }
+    }
+
+    private fun selectPart(part: BodyPart) {
+        selectedPart = part
+        partChips.forEach { (p, chip) -> chip.alpha = if (p == part) 1f else 0.55f }
     }
 
     private fun buildPalette() {
         binding.colorPaletteRow.removeAllViews()
         val sizePx = (36 * resources.displayMetrics.density).toInt()
         val marginPx = (6 * resources.displayMetrics.density).toInt()
-        palette.forEachIndexed { index, color ->
+        palette.forEach { color ->
             val swatch = View(this).apply {
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
@@ -63,115 +89,70 @@ class PetCreatorActivity : AppCompatActivity() {
                     setStroke((2 * resources.displayMetrics.density).toInt(), Color.parseColor("#33000000"))
                 }
                 setOnClickListener {
-                    binding.drawingView.brushColor = color
-                    binding.drawingView.eraseMode = false
+                    appearance = withColor(appearance, selectedPart, color)
+                    refreshPreview()
                 }
             }
-            val params = LinearLayout.LayoutParams(sizePx, sizePx).apply {
-                marginEnd = marginPx
-            }
+            val params = LinearLayout.LayoutParams(sizePx, sizePx).apply { marginEnd = marginPx }
             binding.colorPaletteRow.addView(swatch, params)
-            if (index == 0) swatch.performClick()
         }
     }
 
-    /** Quick base-fill chips: pick a pattern to fill the part's silhouette with the current color. */
-    private fun buildPatternRow() {
-        binding.patternRow.removeAllViews()
-        val paddingPx = (14 * resources.displayMetrics.density).toInt()
-        val marginPx = (6 * resources.displayMetrics.density).toInt()
+    private fun setupLengthSliders() {
+        binding.armLengthLabel.text = getString(R.string.length_label_format, getString(R.string.part_arms))
+        binding.legLengthLabel.text = getString(R.string.length_label_format, getString(R.string.part_legs))
 
-        fun addChip(label: String, onClick: () -> Unit) {
-            val chip = Button(this, null, android.R.attr.buttonStyleSmall).apply {
-                text = label
-                setAllCaps(false)
-                setPadding(paddingPx, 0, paddingPx, 0)
-                setOnClickListener { onClick() }
-            }
-            val params = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { marginEnd = marginPx }
-            binding.patternRow.addView(chip, params)
-        }
+        binding.armLengthSeek.progress = lengthToProgress(appearance.armLength)
+        binding.legLengthSeek.progress = lengthToProgress(appearance.legLength)
 
-        addChip(getString(R.string.pattern_none)) { binding.drawingView.clearPattern() }
-        PatternPreset.entries.forEach { preset ->
-            addChip(preset.displayName) { binding.drawingView.applyPattern(preset, binding.drawingView.brushColor) }
-        }
-    }
-
-    private fun setupBrushControls() {
-        binding.brushThin.setOnClickListener { binding.drawingView.brushWidth = 8f }
-        binding.brushMedium.setOnClickListener { binding.drawingView.brushWidth = 18f }
-        binding.brushThick.setOnClickListener { binding.drawingView.brushWidth = 32f }
-        binding.eraseToggle.setOnClickListener {
-            binding.drawingView.eraseMode = !binding.drawingView.eraseMode
-            binding.eraseToggle.alpha = if (binding.drawingView.eraseMode) 1f else 0.6f
-        }
-        binding.undoButton.setOnClickListener { binding.drawingView.undo() }
-        binding.clearButton.setOnClickListener { binding.drawingView.clear() }
-    }
-
-    private fun setupNavigation() {
-        binding.skipButton.setOnClickListener { advance(save = false) }
-        binding.nextButton.setOnClickListener { advance(save = true) }
-        binding.startButton.setOnClickListener { finishCreation() }
-    }
-
-    private fun showPart(index: Int) {
-        val part = parts[index]
-        binding.stepTitle.text = getString(
-            R.string.creator_step_title, index + 1, parts.size, part.displayName
+        binding.armLengthSeek.setOnSeekBarChangeListener(
+            onLengthChange { appearance = appearance.copy(armLength = it) }
         )
-        binding.drawingView.clear()
-        binding.drawingView.guide = guideFor(part)
-        binding.drawingView.eraseMode = false
-        binding.eraseToggle.alpha = 0.6f
-        binding.drawingView.brushWidth = 18f
+        binding.legLengthSeek.setOnSeekBarChangeListener(
+            onLengthChange { appearance = appearance.copy(legLength = it) }
+        )
     }
 
-    private fun guideFor(part: PetPart): GuideShape = when (part) {
-        PetPart.HEAD -> GuideShape.HEAD
-        PetPart.BODY -> GuideShape.TORSO
-        PetPart.ARM_LEFT, PetPart.ARM_RIGHT, PetPart.LEG_LEFT, PetPart.LEG_RIGHT -> GuideShape.LIMB
-        PetPart.TAIL -> GuideShape.TAIL
-    }
-
-    private fun advance(save: Boolean) {
-        val part = parts[partIndex]
-        if (save && binding.drawingView.hasContent()) {
-            binding.drawingView.exportBitmap()?.let { BitmapIO.save(it, repository.partFile(part)) }
+    private fun onLengthChange(apply: (Float) -> Unit) = object : SeekBar.OnSeekBarChangeListener {
+        override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+            apply(progressToLength(progress))
+            refreshPreview()
         }
-        if (partIndex < parts.size - 1) {
-            partIndex++
-            showPart(partIndex)
-        } else {
-            showNamingStep()
-        }
+
+        override fun onStartTrackingTouch(seekBar: SeekBar) = Unit
+        override fun onStopTrackingTouch(seekBar: SeekBar) = Unit
     }
 
-    private fun showNamingStep() {
-        binding.drawingGroup.visibility = View.GONE
-        binding.namingGroup.visibility = View.VISIBLE
-        binding.previewPetView.stage = PetStage.BABY
-        binding.previewPetView.loadFromRepository(repository)
+    private fun progressToLength(progress: Int): Float {
+        val range = PetAppearance.MAX_LIMB_LENGTH - PetAppearance.MIN_LIMB_LENGTH
+        return PetAppearance.MIN_LIMB_LENGTH + range * (progress / 100f)
+    }
+
+    private fun lengthToProgress(length: Float): Int {
+        val range = PetAppearance.MAX_LIMB_LENGTH - PetAppearance.MIN_LIMB_LENGTH
+        return (((length - PetAppearance.MIN_LIMB_LENGTH) / range) * 100f).toInt().coerceIn(0, 100)
+    }
+
+    private fun withColor(base: PetAppearance, part: BodyPart, color: Int): PetAppearance = when (part) {
+        BodyPart.HEAD -> base.copy(headColor = color)
+        BodyPart.BODY -> base.copy(bodyColor = color)
+        BodyPart.ARMS -> base.copy(armColor = color)
+        BodyPart.LEGS -> base.copy(legColor = color)
+    }
+
+    private fun refreshPreview() {
+        binding.previewPetView.applyAppearance(appearance)
     }
 
     private fun finishCreation() {
-        if (countDrawnParts() == 0) {
-            Toast.makeText(this, R.string.need_at_least_one_part, Toast.LENGTH_SHORT).show()
-            return
-        }
         val name = binding.nameInput.text?.toString().orEmpty()
         if (name.isBlank()) {
             Toast.makeText(this, R.string.need_a_name, Toast.LENGTH_SHORT).show()
             return
         }
+        repository.saveAppearance(appearance)
         repository.finalizeNewPet(name)
         startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP))
         finish()
     }
-
-    private fun countDrawnParts(): Int = parts.count { repository.partFile(it).exists() }
 }

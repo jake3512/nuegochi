@@ -1,22 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">누에고치</string>
-    <string name="welcome_tagline">나만의 반려동물을 직접 그리고, 화면 위에서 함께 키워보세요.</string>
+    <string name="welcome_tagline">나만의 반려동물을 직접 꾸미고, 화면 위에서 함께 키워보세요.</string>
     <string name="create_pet">반려동물 만들기</string>
 
     <!-- Pet creator -->
-    <string name="creator_hint">손가락으로 자유롭게 그리거나, 아래에서 색과 무늬를 골라 빠르게 채워보세요. 점선은 위치 참고용입니다.</string>
-    <string name="creator_step_title">%1$d / %2$d · %3$s를 그려주세요</string>
-    <string name="pattern_none">무늬 없음</string>
-    <string name="brush_thin">얇게</string>
-    <string name="brush_medium">보통</string>
-    <string name="brush_thick">굵게</string>
-    <string name="eraser">지우개</string>
-    <string name="undo">실행 취소</string>
-    <string name="clear_all">모두 지우기</string>
-    <string name="skip_part">건너뛰기</string>
-    <string name="next">다음</string>
-    <string name="need_at_least_one_part">적어도 한 부위는 그려주세요</string>
+    <string name="creator_title">반려동물 모양을 꾸며보세요</string>
+    <string name="creator_hint">부위를 선택해 색을 칠하고, 팔/다리 길이를 슬라이더로 조절해보세요.</string>
+    <string name="part_select_label">부위 선택</string>
+    <string name="color_select_label">색상</string>
+    <string name="length_label_format">%1$s 길이</string>
+    <string name="part_arms">팔</string>
+    <string name="part_legs">다리</string>
     <string name="need_a_name">이름을 입력해주세요</string>
     <string name="name_prompt">반려동물의 이름을 지어주세요</string>
     <string name="name_hint">예: 몽실이</string>
