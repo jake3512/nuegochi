@@ -60,10 +60,15 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
     var messyLevel: Float = 0f
 
     private var appearance: PetAppearance = PetAppearance.default()
+    /** Set to the uptime a new poop just appeared, so a brief disgusted flinch can play once. */
+    private var poopFlinchStart = -1L
 
     /** Convenience to update everything this view cares about from one status snapshot. */
     fun applyStats(stats: PetStats) {
         stage = stats.stage
+        if (stats.poopCount > poopCount) {
+            poopFlinchStart = SystemClock.uptimeMillis()
+        }
         poopCount = stats.poopCount
         hungerLevel = (stats.hunger.toFloat() / PetStats.MAX_STAT).coerceIn(0f, 1f)
         thirstLevel = (stats.thirst.toFloat() / PetStats.MAX_STAT).coerceIn(0f, 1f)
@@ -309,12 +314,25 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         // A quick, shallow breathing pulse that gets more pronounced the thirstier it is.
         val pantPulse = sin(t % 380 / 380f * TAU).toFloat() * (1f - thirstLevel) * 0.05f
 
+        // A one-shot disgusted flinch/squash right when a new poop appears.
+        var flinchSquash = 0f
+        if (poopFlinchStart >= 0) {
+            val elapsed = t - poopFlinchStart
+            if (elapsed in 0..420L) {
+                val progress = (elapsed / 420f).coerceIn(0f, 1f)
+                flinchSquash = sin(progress * Math.PI.toFloat()) * 0.09f
+                tilt -= sin(progress * Math.PI.toFloat()) * 9f
+            } else {
+                poopFlinchStart = -1L
+            }
+        }
+
         canvas.save()
         canvas.translate(shakeX, bob + reactionOffsetY * size)
         canvas.rotate(tilt, size / 2f, size * 0.4f)
         canvas.scale(
-            stage.scale * reactionScaleX,
-            stage.scale * reactionScaleY * (1f + pantPulse),
+            stage.scale * reactionScaleX * (1f + flinchSquash * 0.6f),
+            stage.scale * reactionScaleY * (1f + pantPulse) * (1f - flinchSquash),
             size / 2f, size / 2f
         )
         drawStickFigure(canvas, size, t)
@@ -329,22 +347,39 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
      */
     private fun drawStickFigure(canvas: Canvas, size: Float, t: Long) {
         var legSwing: Float
-        var armSwing: Float
+        var armSwingLeft: Float
+        var armSwingRight: Float
         if (isWalking) {
             val walkT = sin(t % 900 / 900f * TAU).toFloat()
             legSwing = walkT * 16f
-            armSwing = walkT * 16f
+            armSwingLeft = walkT * 16f
+            armSwingRight = walkT * 16f
         } else {
             legSwing = 0f
-            armSwing = 0f
+            armSwingLeft = 0f
+            armSwingRight = 0f
         }
 
-        // A tired stretch: arms swing wide and hold briefly when energy is very low.
+        // A tired stretch: both arms swing wide and hold briefly when energy is very low.
         if (energyLevel < 0.25f) {
             val stretchPeriod = 4000L
             val stretchPhase = (t % stretchPeriod) / stretchPeriod.toFloat()
             if (stretchPhase < 0.3f) {
-                armSwing += sin((stretchPhase / 0.3f).coerceIn(0f, 1f) * Math.PI.toFloat()) * 38f
+                val stretch = sin((stretchPhase / 0.3f).coerceIn(0f, 1f) * Math.PI.toFloat()) * 38f
+                armSwingLeft += stretch
+                armSwingRight += stretch
+            }
+        }
+
+        // An idle quirk: one arm reaches up to scratch when standing still, fed, and content.
+        var scratchBend = 0f
+        if (!isWalking && moodLevel > 0.3f && energyLevel > 0.3f) {
+            val quirkPeriod = 7000L
+            val quirkPhase = (t % quirkPeriod) / quirkPeriod.toFloat()
+            if (quirkPhase < 0.12f) {
+                val hump = sin((quirkPhase / 0.12f).coerceIn(0f, 1f) * Math.PI.toFloat())
+                armSwingRight += hump * 70f
+                scratchBend = hump * 50f
             }
         }
         val limbWidth = size * 0.045f
@@ -363,12 +398,13 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         drawLimb(canvas, headCx, hipY, legLen, limbWidth, restAngle = 18f, swingDegrees = legSwing, sign = 1f, jointBend = legBend)
         drawLimb(canvas, headCx, hipY, legLen, limbWidth, restAngle = 18f, swingDegrees = legSwing, sign = -1f, jointBend = legBend)
 
-        // Arms (elbow bends the same way).
+        // Arms (elbow bends more the harder it's swinging, plus extra bend for the scratch quirk).
         val armLen = size * 0.24f * appearance.armLength
-        val armBend = 14f + abs(armSwing) * 0.45f
+        val armBendRight = 14f + abs(armSwingRight) * 0.45f + scratchBend
+        val armBendLeft = 14f + abs(armSwingLeft) * 0.45f
         shapePaint.color = appearance.armColor
-        drawLimb(canvas, headCx, shoulderY, armLen, limbWidth, restAngle = 30f, swingDegrees = armSwing, sign = 1f, jointBend = armBend)
-        drawLimb(canvas, headCx, shoulderY, armLen, limbWidth, restAngle = 30f, swingDegrees = armSwing, sign = -1f, jointBend = armBend)
+        drawLimb(canvas, headCx, shoulderY, armLen, limbWidth, restAngle = 30f, swingDegrees = armSwingRight, sign = 1f, jointBend = armBendRight)
+        drawLimb(canvas, headCx, shoulderY, armLen, limbWidth, restAngle = 30f, swingDegrees = armSwingLeft, sign = -1f, jointBend = armBendLeft)
 
         // Body (spine from neck to hip).
         shapePaint.style = Paint.Style.STROKE
@@ -386,8 +422,10 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         // A quick periodic blink for a bit of idle life.
         val blinkPhase = t % 2600L
         val eyeRadius = if (blinkPhase < 120L) headRadius * 0.02f else headRadius * 0.11f
-        canvas.drawCircle(headCx - eyeOffset, eyeY, eyeRadius, shapePaint)
-        canvas.drawCircle(headCx + eyeOffset, eyeY, eyeRadius, shapePaint)
+        // Eyes slowly drift left/right, like it's glancing around.
+        val gazeShift = sin(t % 5200 / 5200f * TAU).toFloat() * headRadius * 0.16f
+        canvas.drawCircle(headCx - eyeOffset + gazeShift, eyeY, eyeRadius, shapePaint)
+        canvas.drawCircle(headCx + eyeOffset + gazeShift, eyeY, eyeRadius, shapePaint)
     }
 
     /**
