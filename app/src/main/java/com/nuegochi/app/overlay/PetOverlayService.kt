@@ -1,10 +1,14 @@
 package com.nuegochi.app.overlay
 
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.os.Build
+import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.Gravity
@@ -69,6 +73,18 @@ class PetOverlayService : LifecycleService() {
     private var longPressFired = false
     private val longPressRunnable = Runnable { onLongPress() }
 
+    // Growth only progresses while the screen is on; SCREEN_ON/OFF are protected broadcasts that
+    // can only be observed via a dynamically registered receiver, not a manifest one.
+    private var screenStateReceiverRegistered = false
+    private val screenStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                Intent.ACTION_SCREEN_ON -> repository.setScreenOn(true)
+                Intent.ACTION_SCREEN_OFF -> repository.setScreenOn(false)
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         repository = PetRepository.get(this)
@@ -82,6 +98,14 @@ class PetOverlayService : LifecycleService() {
             stopSelf()
             return
         }
+
+        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+        repository.setScreenOn(powerManager.isInteractive)
+        registerReceiver(screenStateReceiver, IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+        })
+        screenStateReceiverRegistered = true
 
         addPetOverlay()
         observeState()
@@ -399,6 +423,10 @@ class PetOverlayService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        if (screenStateReceiverRegistered) {
+            runCatching { unregisterReceiver(screenStateReceiver) }
+            screenStateReceiverRegistered = false
+        }
         petContainer?.removeCallbacks(longPressRunnable)
         hideActionMenu()
         hideEffect()

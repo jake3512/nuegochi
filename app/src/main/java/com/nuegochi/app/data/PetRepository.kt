@@ -61,6 +61,20 @@ class PetRepository private constructor(context: Context) {
     private val _effects = MutableSharedFlow<PetEffect>(extraBufferCapacity = 4)
     val effects: SharedFlow<PetEffect> = _effects.asSharedFlow()
 
+    /** Whether the device screen is currently on - growth only advances while this is true. */
+    private var screenOn: Boolean = true
+
+    /**
+     * Call whenever the screen turns on/off (from a SCREEN_ON/SCREEN_OFF receiver). Flushes decay
+     * under the *previous* state first, so the elapsed-time split between screen-on and
+     * screen-off growth stays accurate.
+     */
+    fun setScreenOn(on: Boolean) {
+        if (screenOn == on) return
+        applyDecay()
+        screenOn = on
+    }
+
     fun hasPet(): Boolean = prefs.contains(KEY_NAME)
 
     fun currentStats(): PetStats {
@@ -201,7 +215,8 @@ class PetRepository private constructor(context: Context) {
         if (elapsedMinutes <= 0.0) return
 
         if (stats.stage == PetStage.EGG) {
-            val grown = stats.copy(growthExp = stats.growthExp + elapsedMinutes * GROWTH_EXP_PER_MIN, lastUpdateMillis = now)
+            val eggGrowthMinutes = if (screenOn) elapsedMinutes else 0.0
+            val grown = stats.copy(growthExp = stats.growthExp + eggGrowthMinutes * GROWTH_EXP_PER_MIN, lastUpdateMillis = now)
             val hatched = advanceStageIfReady(grown)
             if (hatched.stage != PetStage.EGG) _effects.tryEmit(PetEffect.HATCH)
             save(hatched)
@@ -235,9 +250,11 @@ class PetRepository private constructor(context: Context) {
         if (newHygiene < 30.0) happinessPenalty += elapsedMinutes * 0.2
         val newHappiness = (stats.happiness - happinessPenalty).coerceAtLeast(0.0)
 
-        // Growth now advances purely with elapsed time (care actions only affect the four stats
-        // above), so a well-kept and a neglected pet of the same age are at the same stage.
-        val newGrowthExp = stats.growthExp + elapsedMinutes * GROWTH_EXP_PER_MIN
+        // Growth advances purely with elapsed time (care actions only affect the four stats
+        // above), but only while the screen is on - locking the phone pauses growth, while the
+        // four stats above and poop spawning keep progressing in the background either way.
+        val growthMinutes = if (screenOn) elapsedMinutes else 0.0
+        val newGrowthExp = stats.growthExp + growthMinutes * GROWTH_EXP_PER_MIN
 
         save(
             advanceStageIfReady(
