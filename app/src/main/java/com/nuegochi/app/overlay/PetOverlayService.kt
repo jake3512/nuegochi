@@ -52,6 +52,14 @@ class PetOverlayService : LifecycleService() {
     private var effectView: EffectOverlayView? = null
     private var effectParams: WindowManager.LayoutParams? = null
 
+    private var trailView: FootprintTrailView? = null
+    private var trailAdded = false
+    private var lastFootprintAt = 0L
+    private var footprintLeftToggle = false
+
+    private class PoopMarker(val view: PoopMarkerView, val params: WindowManager.LayoutParams)
+    private val poopMarkers = mutableListOf<PoopMarker>()
+
     private var petSizePx = 0
 
     // Autonomous wandering state.
@@ -143,7 +151,29 @@ class PetOverlayService : LifecycleService() {
         }
     }
 
+    private fun addTrailLayer() {
+        val screenW = resources.displayMetrics.widthPixels
+        val screenH = resources.displayMetrics.heightPixels
+        val view = FootprintTrailView(this).also { trailView = it }
+        val params = WindowManager.LayoutParams(
+            screenW, screenH,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = 0
+            y = 0
+        }
+        runCatching { windowManager.addView(view, params) }
+        trailAdded = true
+    }
+
     private fun addPetOverlay() {
+        addTrailLayer()
         val view = PetView(this).also { petView = it }
         val container = FrameLayout(this).apply { addView(view, FrameLayout.LayoutParams(-1, -1)) }
         petContainer = container
@@ -222,25 +252,21 @@ class PetOverlayService : LifecycleService() {
                     pausedUntil = 0L
                     pickNewTarget()
                 } else if (!longPressFired) {
-                    onShortTap(event.x, event.y)
+                    onShortTap()
                 }
             }
         }
         return true
     }
 
-    /** A quick tap: a poke on a poop cleans it, otherwise it's a little one-shot affectionate reaction. */
-    private fun onShortTap(x: Float, y: Float) {
+    /** A quick tap on the pet itself: a little one-shot affectionate reaction. */
+    private fun onShortTap() {
         val stats = repository.currentStats()
         if (stats.stage == PetStage.COCOON) {
             openEndingIfNeeded(stats)
             return
         }
         if (stats.stage == PetStage.EGG) return
-        if (petView?.isPoopHit(x, y) == true) {
-            repository.cleanPoop()
-            return
-        }
         repository.pet()
     }
 
@@ -321,10 +347,72 @@ class PetOverlayService : LifecycleService() {
         effectParams = null
     }
 
+    /** Leaves a new poop marker at the pet's current on-screen spot, its own small touchable window. */
+    private fun spawnPoopMarker() {
+        val screenW = resources.displayMetrics.widthPixels
+        val screenH = resources.displayMetrics.heightPixels
+        val markerSize = dp(26)
+        // A little jitter so several poops spawned at once (e.g. after being away a while) don't
+        // sit in an exact stack.
+        val jitterX = Random.nextInt(-dp(10), dp(10) + 1)
+        val jitterY = Random.nextInt(-dp(6), dp(6) + 1)
+        val x = (currentX + petSizePx / 2f - markerSize / 2f + jitterX).coerceIn(0f, (screenW - markerSize).toFloat())
+        val y = (currentY + petSizePx * 0.92f - markerSize / 2f + jitterY).coerceIn(0f, (screenH - markerSize).toFloat())
+
+        val view = PoopMarkerView(this)
+        val params = WindowManager.LayoutParams(
+            markerSize, markerSize,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            this.x = x.toInt()
+            this.y = y.toInt()
+        }
+        val marker = PoopMarker(view, params)
+
+        val markerLongPressRunnable = Runnable {
+            repository.cleanOnePoop()
+            removePoopMarker(marker)
+        }
+        view.setOnTouchListener { touchedView, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    touchedView.postDelayed(markerLongPressRunnable, LONG_PRESS_MS)
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    touchedView.removeCallbacks(markerLongPressRunnable)
+                }
+            }
+            true
+        }
+
+        runCatching { windowManager.addView(view, params) }
+        poopMarkers.add(marker)
+    }
+
+    private fun removePoopMarker(marker: PoopMarker) {
+        poopMarkers.remove(marker)
+        runCatching { windowManager.removeView(marker.view) }
+    }
+
+    private fun clearAllPoopMarkers() {
+        poopMarkers.toList().forEach { removePoopMarker(it) }
+    }
+
     private fun observeState() {
         lifecycleScope.launch {
             repository.statsFlow.collect { stats ->
                 petView?.applyStats(stats)
+                if (stats.poopCount == 0 && poopMarkers.isNotEmpty()) {
+                    // Cleared in bulk via the care menu.
+                    clearAllPoopMarkers()
+                } else if (stats.poopCount > poopMarkers.size) {
+                    repeat(stats.poopCount - poopMarkers.size) { spawnPoopMarker() }
+                }
                 if (stats.stage == PetStage.COCOON) {
                     openEndingIfNeeded(stats)
                 }
@@ -403,6 +491,7 @@ class PetOverlayService : LifecycleService() {
             currentY += dy / distance * step
             petView?.moveDirX = dx / distance
             petView?.isWalking = true
+            maybeDropFootprint(now, stats.hygiene)
         }
         val newX = currentX.toInt()
         val newY = currentY.toInt()
@@ -422,6 +511,22 @@ class PetOverlayService : LifecycleService() {
         targetY = Random.nextInt(dp(80), maxY + 1).toFloat()
     }
 
+    /** While actually walking, leaves a fading footprint behind at an interval, only if hygiene < 100. */
+    private fun maybeDropFootprint(now: Long, hygiene: Int) {
+        if (hygiene >= 100) return
+        val dirtiness = ((100 - hygiene) / 100f).coerceIn(0f, 1f)
+        val interval = (900L - (dirtiness * 550L).toLong()).coerceAtLeast(300L)
+        if (now - lastFootprintAt < interval) return
+        lastFootprintAt = now
+        footprintLeftToggle = !footprintLeftToggle
+        trailView?.addFootprint(
+            currentX + petSizePx / 2f,
+            currentY + petSizePx * 0.94f,
+            dirtiness,
+            footprintLeftToggle
+        )
+    }
+
     override fun onDestroy() {
         if (screenStateReceiverRegistered) {
             runCatching { unregisterReceiver(screenStateReceiver) }
@@ -430,6 +535,11 @@ class PetOverlayService : LifecycleService() {
         petContainer?.removeCallbacks(longPressRunnable)
         hideActionMenu()
         hideEffect()
+        clearAllPoopMarkers()
+        if (trailAdded) {
+            trailView?.let { runCatching { windowManager.removeView(it) } }
+            trailAdded = false
+        }
         petContainer?.let { runCatching { windowManager.removeView(it) } }
         petContainer = null
         super.onDestroy()

@@ -215,10 +215,6 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
             else -> drawStickFigureWithMotion(canvas, size, t)
         }
         canvas.restore()
-
-        if (poopCount > 0 && stage.isMoving) {
-            drawPoops(canvas, left, top, size)
-        }
     }
 
     /** Egg rocks gently side to side, like something inside is stirring. */
@@ -591,35 +587,4 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         }
     }
 
-    /** Whether a tap at the view-local ([x], [y]) landed on one of the drawn poop icons. */
-    fun isPoopHit(x: Float, y: Float): Boolean {
-        if (poopCount <= 0 || !stage.isMoving) return false
-        val size = minOf(width, height).toFloat()
-        if (size <= 0f) return false
-        val left = (width - size) / 2f
-        val top = (height - size) / 2f
-        val count = poopCount.coerceAtMost(5)
-        val hitRadius = size * 0.075f
-        for (i in 0 until count) {
-            val cx = left + size * (0.12f + i * 0.16f)
-            val cy = top + size * 0.96f
-            val dx = x - cx
-            val dy = y - cy
-            if (dx * dx + dy * dy <= hitRadius * hitRadius) return true
-        }
-        return false
-    }
-
-    private fun drawPoops(canvas: Canvas, left: Float, top: Float, size: Float) {
-        shapePaint.style = Paint.Style.FILL
-        shapePaint.color = Color.parseColor("#8B5E34")
-        val count = poopCount.coerceAtMost(5)
-        for (i in 0 until count) {
-            val cx = left + size * (0.12f + i * 0.16f)
-            val cy = top + size * 0.96f
-            val r = size * 0.045f
-            canvas.drawCircle(cx, cy, r, shapePaint)
-            canvas.drawCircle(cx - r * 0.3f, cy - r * 0.9f, r * 0.6f, shapePaint)
-        }
-    }
 }

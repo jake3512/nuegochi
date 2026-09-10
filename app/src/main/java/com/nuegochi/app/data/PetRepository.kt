@@ -161,6 +161,17 @@ class PetRepository private constructor(context: Context) {
         )
     }
 
+    /** Removes exactly one poop, e.g. long-pressing directly on the marker it left on screen. */
+    fun cleanOnePoop() = applyAction(PetEffect.CLEAN) { s ->
+        if (s.poopCount == 0) return@applyAction s
+        val newCount = s.poopCount - 1
+        s.copy(
+            poopCount = newCount,
+            minutesTowardPoop = if (newCount == 0) 0.0 else s.minutesTowardPoop,
+            hygiene = (s.hygiene + 4).coerceAtMost(100.0)
+        )
+    }
+
     fun wash() = applyAction(PetEffect.WASH) { s ->
         s.copy(
             hygiene = 100.0,
