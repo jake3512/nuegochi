@@ -25,6 +25,9 @@ class EndingActivity : AppCompatActivity() {
         binding.endingPetView.stage = PetStage.COCOON
 
         binding.keepWatchingButton.setOnClickListener { finish() }
+        binding.viewStorageButton.setOnClickListener {
+            startActivity(Intent(this, StorageActivity::class.java))
+        }
         binding.newPetButton.setOnClickListener {
             repository.prepareForNewPetCreation()
             startActivity(Intent(this, PetCreatorActivity::class.java))

@@ -39,6 +39,11 @@
             android:launchMode="singleTask"
             android:theme="@style/Theme.Nuegochi" />
 
+        <activity
+            android:name=".ui.StorageActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Nuegochi" />
+
         <service
             android:name=".overlay.PetOverlayService"
             android:exported="false"

@@ -46,6 +46,10 @@
   포함) 멈춥니다 — 반면 배고픔·목마름·행복도·청결도와 똥 쌓이는 것은 화면이 꺼져 있어도
   계속 진행됩니다. 성체까지 자라면 반려동물은 고치를 짓고 조용히 잠드는 것으로 이야기가
   끝나며, 이후에는 새로운 반려동물을 처음부터 다시 만들 수 있습니다.
+- **고치 저장소**: 고치까지 완성한 반려동물은 사라지지 않고 "저장소" 화면에 전시됩니다.
+  이름·모양·완성 날짜가 그대로 남아, 지금까지 키워낸 모든 누에고치를 언제든 다시
+  둘러볼 수 있습니다. 대시보드 우측 상단의 "저장소" 버튼이나 엔딩 화면에서 들어갈 수
+  있습니다.
 - **이름 짓기**: 반려동물을 만들 때 이름을 직접 짓고, 나중에 대시보드에서 언제든 이름을
   바꿀 수 있습니다.
 - 앱을 완전히 꺼도(다른 앱으로 전환해도) 포그라운드 서비스로 동작하기 때문에 오버레이
@@ -59,6 +63,7 @@
 | `PetCreatorActivity` | 부위별 색상과 팔/다리 길이를 정하고 이름을 짓는 스틱맨 커스터마이즈 화면입니다. |
 | `PetOverlayService` | `WindowManager` 오버레이로 반려동물을 화면 위에 그리고, 자율적으로 돌아다니며 탭/드래그에 반응하는 포그라운드 서비스입니다. |
 | `EndingActivity` | 반려동물이 번데기가 되었을 때 한 번 표시되는 엔딩 화면입니다. |
+| `StorageActivity` | 고치까지 완성한 모든 반려동물을 모아 보여주는 저장소(전시) 화면입니다. |
 
 ## 프로젝트 구조
 
@@ -67,7 +72,7 @@ app/src/main/java/com/nuegochi/app/
 ├── data/      // PetStage, PetStats, PetAppearance, BodyPart, PetRepository(저장/성장/스탯 로직), PetEffect
 ├── render/    // PetView - 스틱맨 반려동물을 그리는 커스텀 뷰
 ├── overlay/   // PetOverlayService, ActionMenuView, EffectOverlayView, BootReceiver
-└── ui/        // MainActivity, PetCreatorActivity, EndingActivity
+└── ui/        // MainActivity, PetCreatorActivity, EndingActivity, StorageActivity
 ```
 
 돌봄 상태(배고픔/목마름/행복도/청결도/성장치)는 `PetRepository`가 `SharedPreferences`에
@@ -103,3 +108,5 @@ app/src/main/java/com/nuegochi/app/
   가벼운 2D 벡터/캔버스 드로잉만 사용합니다.
 - 반려동물 외형(부위별 색상, 팔/다리 길이)은 이미지가 아니라 `SharedPreferences`에 저장된
   값으로부터 매번 그려집니다.
+- 완성된 반려동물 저장소는 `SharedPreferences`에 JSON 배열로 저장되며, 새 반려동물을
+  시작해도(기존 상태를 초기화해도) 지워지지 않고 계속 쌓입니다.

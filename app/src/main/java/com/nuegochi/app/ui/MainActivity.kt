@@ -49,6 +49,9 @@ class MainActivity : AppCompatActivity() {
         binding.createPetButton.setOnClickListener {
             startActivity(Intent(this, PetCreatorActivity::class.java))
         }
+        binding.storageButton.setOnClickListener {
+            startActivity(Intent(this, StorageActivity::class.java))
+        }
         binding.renameButton.setOnClickListener { showRenameDialog() }
         binding.feedButton.setOnClickListener { repository.feed() }
         binding.waterButton.setOnClickListener { repository.giveWater() }
