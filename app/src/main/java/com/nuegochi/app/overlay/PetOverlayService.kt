@@ -185,6 +185,7 @@ class PetOverlayService : LifecycleService() {
                     runCatching { windowManager.updateViewLayout(container, params) }
                     petView?.moveDirX = (dx / dp(80)).coerceIn(-1f, 1f)
                     petView?.isWalking = true
+                    petView?.isBeingDragged = true
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -193,6 +194,7 @@ class PetOverlayService : LifecycleService() {
                     // Hand control straight back to free autonomous wandering from here.
                     isDragging = false
                     petView?.isWalking = false
+                    petView?.isBeingDragged = false
                     pausedUntil = 0L
                     pickNewTarget()
                 } else if (!longPressFired) {

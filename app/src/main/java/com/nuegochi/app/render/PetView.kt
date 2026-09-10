@@ -40,6 +40,8 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         }
 
     var isWalking: Boolean = false
+    /** True while the user is actively dragging the pet around - plays a struggling/flailing motion. */
+    var isBeingDragged: Boolean = false
     /** -1(left)..1(right), the horizontal direction of travel while walking - drives a forward lean. */
     var moveDirX: Float = 0f
     var poopCount: Int = 0
@@ -253,18 +255,45 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
     private fun drawStickFigureWithMotion(canvas: Canvas, size: Float, t: Long) {
         val stageBobMul: Float
         val stageWobbleDeg: Float
+        // Each growth stage gets one extra signature quirk, on top of the general bob/wobble.
+        var stageQuirkTilt = 0f
+        var stageQuirkShakeX = 0f
+        var stageQuirkBob = 0f
         when (stage) {
             PetStage.BABY -> {
                 stageBobMul = 1.35f
                 stageWobbleDeg = 5f
+                // Wobbly toddler balance: a quick off-balance lurch every few seconds.
+                val period = 4200L
+                val phase = (t % period) / period.toFloat()
+                if (phase < 0.18f) {
+                    val hump = sin((phase / 0.18f).coerceIn(0f, 1f) * Math.PI.toFloat())
+                    val lurchSign = if ((t / period) % 2L == 0L) 1f else -1f
+                    stageQuirkShakeX = hump * size * 0.045f * lurchSign
+                }
             }
             PetStage.CHILD -> {
                 stageBobMul = 1.15f
                 stageWobbleDeg = 2.5f
+                // Curious peek: holds a sideways lean, like it noticed something.
+                val period = 6000L
+                val phase = (t % period) / period.toFloat()
+                if (phase < 0.35f) {
+                    val hump = sin((phase / 0.35f).coerceIn(0f, 1f) * Math.PI.toFloat())
+                    stageQuirkTilt = hump * 10f
+                }
             }
             PetStage.ADULT -> {
                 stageBobMul = 0.8f
                 stageWobbleDeg = 0.4f
+                // Confident nod: a slow, deliberate small bow.
+                val period = 5000L
+                val phase = (t % period) / period.toFloat()
+                if (phase < 0.25f) {
+                    val hump = sin((phase / 0.25f).coerceIn(0f, 1f) * Math.PI.toFloat())
+                    stageQuirkTilt = hump * 6f
+                    stageQuirkBob = hump * size * 0.015f
+                }
             }
             else -> { // TEEN and any fallback
                 stageBobMul = 1f
@@ -294,21 +323,66 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         // Slouches lower in its resting pose the hungrier it is.
         bob += (1f - hungerLevel) * size * 0.035f
 
+        // A sharp little double-jolt when hunger is critically low (a tummy grumble).
+        var grumblePulse = 0f
+        if (hungerLevel < 0.15f) {
+            val period = 2600L
+            val phase = (t % period) / period.toFloat()
+            if (phase < 0.2f) {
+                grumblePulse = abs(sin((phase / 0.2f) * TAU * 2f)) * 0.05f
+            }
+        }
+
+        // A slow forward head-hang hold when thirst is critically low.
+        var thirstDroopBob = 0f
+        var thirstDroopTilt = 0f
+        if (thirstLevel < 0.15f) {
+            val period = 6000L
+            val phase = (t % period) / period.toFloat()
+            if (phase < 0.22f) {
+                val hump = sin((phase / 0.22f).coerceIn(0f, 1f) * Math.PI.toFloat())
+                thirstDroopBob = hump * size * 0.02f
+                thirstDroopTilt = hump * 5f
+            }
+        }
+
+        // A long, slow sigh when happiness is critically low.
+        var sighBob = 0f
+        if (moodLevel < 0.15f) {
+            val period = 5200L
+            val phase = (t % period) / period.toFloat()
+            if (phase < 0.3f) {
+                sighBob = sin((phase / 0.3f).coerceIn(0f, 1f) * Math.PI.toFloat()) * size * 0.018f
+            }
+        }
+        bob += stageQuirkBob + thirstDroopBob + sighBob
+
         val droopDegrees = (1f - moodLevel) * 6f
         val stageWobble = sin(t % 2600 / 2600f * TAU).toFloat() * stageWobbleDeg
         // A constant (non-oscillating) hunched lean that deepens the hungrier it is.
         val hungerHunch = (1f - hungerLevel) * 5f
-        var tilt = sin(t % 2000 / 2000f * TAU).toFloat() * droopDegrees + stageWobble + hungerHunch + moveLean + reactionRotation
+        var tilt = sin(t % 2000 / 2000f * TAU).toFloat() * droopDegrees + stageWobble + hungerHunch +
+            moveLean + stageQuirkTilt + thirstDroopTilt + reactionRotation
 
-        var shakeX = 0f
+        var shakeX = stageQuirkShakeX
         if (messyLevel > 0.02f) {
             val shakePeriod = lerp(3200f, 1000f, messyLevel)
             val shakePhase = (t % shakePeriod.toLong()) / shakePeriod
             val activeFraction = lerp(0.15f, 0.4f, messyLevel)
             if (shakePhase < activeFraction) {
                 val shiverStrength = lerp(0.4f, 1.3f, messyLevel)
-                shakeX = sin(shakePhase / activeFraction * TAU * 4f).toFloat() * size * 0.01f * shiverStrength
+                shakeX += sin(shakePhase / activeFraction * TAU * 4f).toFloat() * size * 0.01f * shiverStrength
             }
+        }
+        // On top of the quick shiver, a slower disgusted sway once it's really filthy.
+        if (messyLevel > 0.8f) {
+            shakeX += sin(t % 1800 / 1800f * TAU).toFloat() * size * 0.012f
+        }
+
+        // Extra frantic wobble/squirm layered on top of everything else while being carried.
+        if (isBeingDragged) {
+            tilt += sin(t % 220 / 220f * TAU).toFloat() * 9f
+            shakeX += sin(t % 170 / 170f * TAU).toFloat() * size * 0.02f
         }
 
         // A quick, shallow breathing pulse that gets more pronounced the thirstier it is.
@@ -332,7 +406,7 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         canvas.rotate(tilt, size / 2f, size * 0.4f)
         canvas.scale(
             stage.scale * reactionScaleX * (1f + flinchSquash * 0.6f),
-            stage.scale * reactionScaleY * (1f + pantPulse) * (1f - flinchSquash),
+            stage.scale * reactionScaleY * (1f + pantPulse - grumblePulse) * (1f - flinchSquash),
             size / 2f, size / 2f
         )
         drawStickFigure(canvas, size, t)
@@ -343,25 +417,37 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
 
     /**
      * The stick figure skeleton. Limbs pivot at their attachment point and swing during
-     * [isWalking]; their resting length is scaled by the corresponding [appearance] value.
+     * [isWalking] (or flail out of sync while [isBeingDragged]); their resting length is scaled
+     * by the corresponding [appearance] value.
      */
     private fun drawStickFigure(canvas: Canvas, size: Float, t: Long) {
-        var legSwing: Float
+        var legSwingLeft: Float
+        var legSwingRight: Float
         var armSwingLeft: Float
         var armSwingRight: Float
-        if (isWalking) {
-            val walkT = sin(t % 900 / 900f * TAU).toFloat()
-            legSwing = walkT * 16f
-            armSwingLeft = walkT * 16f
-            armSwingRight = walkT * 16f
+        if (isBeingDragged) {
+            // A frantic, out-of-sync flail while being picked up and carried around.
+            legSwingRight = sin(t % 240 / 240f * TAU).toFloat() * 30f
+            legSwingLeft = sin((t + 130) % 260 / 260f * TAU).toFloat() * 30f
+            armSwingRight = sin((t + 60) % 220 / 220f * TAU).toFloat() * 36f
+            armSwingLeft = sin((t + 170) % 250 / 250f * TAU).toFloat() * 36f
+        } else if (isWalking) {
+            // A natural alternating gait: the two legs swing opposite each other, and each arm
+            // swings with the OPPOSITE-side leg (contralateral coordination, like a real walk).
+            val legPhase = t % 900 / 900f * TAU
+            legSwingRight = sin(legPhase).toFloat() * 16f
+            legSwingLeft = sin(legPhase + Math.PI.toFloat()).toFloat() * 16f
+            armSwingRight = sin(legPhase + Math.PI.toFloat()).toFloat() * 14f
+            armSwingLeft = sin(legPhase).toFloat() * 14f
         } else {
-            legSwing = 0f
+            legSwingLeft = 0f
+            legSwingRight = 0f
             armSwingLeft = 0f
             armSwingRight = 0f
         }
 
         // A tired stretch: both arms swing wide and hold briefly when energy is very low.
-        if (energyLevel < 0.25f) {
+        if (!isBeingDragged && energyLevel < 0.25f) {
             val stretchPeriod = 4000L
             val stretchPhase = (t % stretchPeriod) / stretchPeriod.toFloat()
             if (stretchPhase < 0.3f) {
@@ -373,7 +459,7 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
 
         // An idle quirk: one arm reaches up to scratch when standing still, fed, and content.
         var scratchBend = 0f
-        if (!isWalking && moodLevel > 0.3f && energyLevel > 0.3f) {
+        if (!isBeingDragged && !isWalking && moodLevel > 0.3f && energyLevel > 0.3f) {
             val quirkPeriod = 7000L
             val quirkPhase = (t % quirkPeriod) / quirkPeriod.toFloat()
             if (quirkPhase < 0.12f) {
@@ -382,29 +468,44 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
                 scratchBend = hump * 50f
             }
         }
-        val limbWidth = size * 0.045f
+
+        // TEEN-only idle quirk: a nonchalant one-shoulder shrug.
+        if (!isBeingDragged && !isWalking && stage == PetStage.TEEN) {
+            val shrugPeriod = 5000L
+            val shrugPhase = (t % shrugPeriod) / shrugPeriod.toFloat()
+            if (shrugPhase < 0.15f) {
+                val hump = sin((shrugPhase / 0.15f).coerceIn(0f, 1f) * Math.PI.toFloat())
+                armSwingLeft -= hump * 25f
+            }
+        }
+
+        // Arms hang limper (closer to the body) the sadder it is, instead of a fixed open stance.
+        val armRestAngle = lerp(12f, 30f, moodLevel)
+
+        val limbWidth = size * 0.065f
 
         val headCx = size * 0.5f
         val headCy = size * 0.19f
         val headRadius = size * 0.11f
         val neckY = size * 0.30f
-        val shoulderY = size * 0.36f
-        val hipY = size * 0.60f
+        val shoulderY = size * 0.34f
+        val hipY = size * 0.50f
 
         // Legs (knee bends more the harder the leg is swinging, for a natural walking/kicking bend).
-        val legLen = size * 0.30f * appearance.legLength
-        val legBend = 10f + abs(legSwing) * 0.55f
+        val legLen = size * 0.22f * appearance.legLength
+        val legBendRight = 10f + abs(legSwingRight) * 0.55f
+        val legBendLeft = 10f + abs(legSwingLeft) * 0.55f
         shapePaint.color = appearance.legColor
-        drawLimb(canvas, headCx, hipY, legLen, limbWidth, restAngle = 18f, swingDegrees = legSwing, sign = 1f, jointBend = legBend)
-        drawLimb(canvas, headCx, hipY, legLen, limbWidth, restAngle = 18f, swingDegrees = legSwing, sign = -1f, jointBend = legBend)
+        drawLimb(canvas, headCx, hipY, legLen, limbWidth, restAngle = 18f, swingDegrees = legSwingRight, sign = 1f, jointBend = legBendRight)
+        drawLimb(canvas, headCx, hipY, legLen, limbWidth, restAngle = 18f, swingDegrees = legSwingLeft, sign = -1f, jointBend = legBendLeft)
 
         // Arms (elbow bends more the harder it's swinging, plus extra bend for the scratch quirk).
-        val armLen = size * 0.24f * appearance.armLength
+        val armLen = size * 0.17f * appearance.armLength
         val armBendRight = 14f + abs(armSwingRight) * 0.45f + scratchBend
         val armBendLeft = 14f + abs(armSwingLeft) * 0.45f
         shapePaint.color = appearance.armColor
-        drawLimb(canvas, headCx, shoulderY, armLen, limbWidth, restAngle = 30f, swingDegrees = armSwingRight, sign = 1f, jointBend = armBendRight)
-        drawLimb(canvas, headCx, shoulderY, armLen, limbWidth, restAngle = 30f, swingDegrees = armSwingLeft, sign = -1f, jointBend = armBendLeft)
+        drawLimb(canvas, headCx, shoulderY, armLen, limbWidth, restAngle = armRestAngle, swingDegrees = armSwingRight, sign = 1f, jointBend = armBendRight)
+        drawLimb(canvas, headCx, shoulderY, armLen, limbWidth, restAngle = armRestAngle, swingDegrees = armSwingLeft, sign = -1f, jointBend = armBendLeft)
 
         // Body (spine from neck to hip).
         shapePaint.style = Paint.Style.STROKE
