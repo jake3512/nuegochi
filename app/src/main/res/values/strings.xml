@@ -43,6 +43,14 @@
     <string name="ending_title_format">%1$s가 고치가 되었어요!</string>
     <string name="ending_message">정성껏 돌본 덕분에 누에고치가 무사히 성장을 마치고 고치를 지었어요. 이제 조용히 잠들어 다음 이야기를 기다립니다.</string>
     <string name="ending_keep_watching">계속 지켜보기</string>
+    <string name="view_storage">저장소에서 보기</string>
+
+    <!-- Storage -->
+    <string name="storage_button">저장소</string>
+    <string name="storage_title">고치 저장소</string>
+    <string name="storage_empty">아직 완성된 누에고치가 없어요.\n끝까지 잘 키워서 첫 번째 고치를 전시해보세요!</string>
+    <string name="storage_completed_format">%1$s 완성</string>
+    <string name="close">닫기</string>
 
     <!-- Notification -->
     <string name="notification_title">%1$s가 화면 위에서 놀고 있어요</string>

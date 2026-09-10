@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Single source of truth for the pet's persisted state.
@@ -49,6 +51,13 @@ class PetRepository private constructor(context: Context) {
         )
     }
 
+    /** A snapshot of a pet that finished growing into a cocoon, kept for the storage/exhibit screen. */
+    data class CompletedPet(
+        val name: String,
+        val appearance: PetAppearance,
+        val completedAtMillis: Long
+    )
+
     private val appContext = context.applicationContext
     private val prefs: SharedPreferences =
         appContext.getSharedPreferences("nuegochi_prefs", Context.MODE_PRIVATE)
@@ -60,6 +69,20 @@ class PetRepository private constructor(context: Context) {
 
     private val _effects = MutableSharedFlow<PetEffect>(extraBufferCapacity = 4)
     val effects: SharedFlow<PetEffect> = _effects.asSharedFlow()
+
+    /** Whether the device screen is currently on - growth only advances while this is true. */
+    private var screenOn: Boolean = true
+
+    /**
+     * Call whenever the screen turns on/off (from a SCREEN_ON/SCREEN_OFF receiver). Flushes decay
+     * under the *previous* state first, so the elapsed-time split between screen-on and
+     * screen-off growth stays accurate.
+     */
+    fun setScreenOn(on: Boolean) {
+        if (screenOn == on) return
+        applyDecay()
+        screenOn = on
+    }
 
     fun hasPet(): Boolean = prefs.contains(KEY_NAME)
 
@@ -93,9 +116,51 @@ class PetRepository private constructor(context: Context) {
             .apply()
     }
 
-    /** Wipes any previous pet's appearance and stats. Call once, right before a fresh creation flow starts. */
+    /**
+     * Wipes any previous pet's appearance and stats. Call once, right before a fresh creation flow
+     * starts. Keeps the storage/exhibit archive of already-completed pets intact.
+     */
     fun prepareForNewPetCreation() {
-        prefs.edit().clear().apply()
+        val archive = prefs.getString(KEY_COMPLETED_PETS, null)
+        val editor = prefs.edit().clear()
+        if (archive != null) editor.putString(KEY_COMPLETED_PETS, archive)
+        editor.apply()
+    }
+
+    /** Completed pets (finished growing into a cocoon), most recently completed first. */
+    fun completedPets(): List<CompletedPet> {
+        val array = JSONArray(prefs.getString(KEY_COMPLETED_PETS, "[]"))
+        return (0 until array.length()).map { i ->
+            val obj = array.getJSONObject(i)
+            CompletedPet(
+                name = obj.getString("name"),
+                appearance = PetAppearance(
+                    headColor = obj.getInt("headColor"),
+                    bodyColor = obj.getInt("bodyColor"),
+                    armColor = obj.getInt("armColor"),
+                    legColor = obj.getInt("legColor"),
+                    armLength = obj.getDouble("armLength").toFloat(),
+                    legLength = obj.getDouble("legLength").toFloat()
+                ),
+                completedAtMillis = obj.getLong("completedAt")
+            )
+        }.sortedByDescending { it.completedAtMillis }
+    }
+
+    /** Archives the current pet's look into the storage/exhibit list, called once it becomes a cocoon. */
+    private fun archiveCompletedPet() {
+        val appearance = currentAppearance()
+        val entry = JSONObject()
+            .put("name", precise.name)
+            .put("headColor", appearance.headColor)
+            .put("bodyColor", appearance.bodyColor)
+            .put("armColor", appearance.armColor)
+            .put("legColor", appearance.legColor)
+            .put("armLength", appearance.armLength.toDouble())
+            .put("legLength", appearance.legLength.toDouble())
+            .put("completedAt", System.currentTimeMillis())
+        val array = JSONArray(prefs.getString(KEY_COMPLETED_PETS, "[]")).put(entry)
+        prefs.edit().putString(KEY_COMPLETED_PETS, array.toString()).apply()
     }
 
     /** Call after the user has picked an appearance and name to actually start raising the pet. */
@@ -147,6 +212,17 @@ class PetRepository private constructor(context: Context) {
         )
     }
 
+    /** Removes exactly one poop, e.g. long-pressing directly on the marker it left on screen. */
+    fun cleanOnePoop() = applyAction(PetEffect.CLEAN) { s ->
+        if (s.poopCount == 0) return@applyAction s
+        val newCount = s.poopCount - 1
+        s.copy(
+            poopCount = newCount,
+            minutesTowardPoop = if (newCount == 0) 0.0 else s.minutesTowardPoop,
+            hygiene = (s.hygiene + 4).coerceAtMost(100.0)
+        )
+    }
+
     fun wash() = applyAction(PetEffect.WASH) { s ->
         s.copy(
             hygiene = 100.0,
@@ -161,6 +237,7 @@ class PetRepository private constructor(context: Context) {
 
     fun markEndingShown() {
         applyDecay()
+        if (!precise.endingShown) archiveCompletedPet()
         save(precise.copy(endingShown = true))
     }
 
@@ -201,7 +278,8 @@ class PetRepository private constructor(context: Context) {
         if (elapsedMinutes <= 0.0) return
 
         if (stats.stage == PetStage.EGG) {
-            val grown = stats.copy(growthExp = stats.growthExp + elapsedMinutes * GROWTH_EXP_PER_MIN, lastUpdateMillis = now)
+            val eggGrowthMinutes = if (screenOn) elapsedMinutes else 0.0
+            val grown = stats.copy(growthExp = stats.growthExp + eggGrowthMinutes * GROWTH_EXP_PER_MIN, lastUpdateMillis = now)
             val hatched = advanceStageIfReady(grown)
             if (hatched.stage != PetStage.EGG) _effects.tryEmit(PetEffect.HATCH)
             save(hatched)
@@ -235,9 +313,11 @@ class PetRepository private constructor(context: Context) {
         if (newHygiene < 30.0) happinessPenalty += elapsedMinutes * 0.2
         val newHappiness = (stats.happiness - happinessPenalty).coerceAtLeast(0.0)
 
-        // Growth now advances purely with elapsed time (care actions only affect the four stats
-        // above), so a well-kept and a neglected pet of the same age are at the same stage.
-        val newGrowthExp = stats.growthExp + elapsedMinutes * GROWTH_EXP_PER_MIN
+        // Growth advances purely with elapsed time (care actions only affect the four stats
+        // above), but only while the screen is on - locking the phone pauses growth, while the
+        // four stats above and poop spawning keep progressing in the background either way.
+        val growthMinutes = if (screenOn) elapsedMinutes else 0.0
+        val newGrowthExp = stats.growthExp + growthMinutes * GROWTH_EXP_PER_MIN
 
         save(
             advanceStageIfReady(
@@ -316,6 +396,7 @@ class PetRepository private constructor(context: Context) {
         private const val KEY_LAST_UPDATE = "pet_last_update"
         private const val KEY_ENDING_SHOWN = "pet_ending_shown"
         private const val KEY_OVERLAY_ENABLED = "overlay_enabled"
+        private const val KEY_COMPLETED_PETS = "completed_pets_archive"
 
         private const val KEY_HEAD_COLOR = "appearance_head_color"
         private const val KEY_BODY_COLOR = "appearance_body_color"
