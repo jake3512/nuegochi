@@ -16,6 +16,7 @@ import com.nuegochi.app.data.PetEffect
 import com.nuegochi.app.data.PetStage
 import com.nuegochi.app.data.PetStats
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.sin
 
 /**
@@ -25,8 +26,13 @@ import kotlin.math.sin
  */
 class PetView(context: Context, attrs: AttributeSet? = null) : View(context, attrs) {
 
-    private companion object {
-        val TAU = (Math.PI * 2).toFloat()
+    companion object {
+        private val TAU = (Math.PI * 2).toFloat()
+        private const val COLLAPSE_FALL_MS = 300L
+        private const val COLLAPSE_HOLD_MS = 900L
+        private const val COLLAPSE_RISE_MS = 400L
+        const val COLLAPSE_TOTAL_MS = COLLAPSE_FALL_MS + COLLAPSE_HOLD_MS + COLLAPSE_RISE_MS
+        const val DIZZY_DURATION_MS = 3000L
     }
 
     private val shapePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -64,6 +70,20 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
     private var appearance: PetAppearance = PetAppearance.default()
     /** Set to the uptime a new poop just appeared, so a brief disgusted flinch can play once. */
     private var poopFlinchStart = -1L
+    /** Set to the uptime it bumped into the top/bottom edge, so a one-shot faceplant can play. */
+    private var collapseStart = -1L
+    /** While uptime is before this, plays a dizzy wobble with stars circling the head. */
+    private var dizzyUntil = -1L
+
+    /** Plays a one-shot faceplant: falls prone, holds a beat, then gets back up. */
+    fun playCollapse() {
+        collapseStart = SystemClock.uptimeMillis()
+    }
+
+    /** Plays a wobbly, seeing-stars dizzy spell for a few seconds, e.g. after being shaken. */
+    fun playDizzy() {
+        dizzyUntil = SystemClock.uptimeMillis() + DIZZY_DURATION_MS
+    }
 
     /** Convenience to update everything this view cares about from one status snapshot. */
     fun applyStats(stats: PetStats) {
@@ -183,11 +203,11 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
                 reactionOffsetY = 0f
             }
             PetEffect.PET -> {
-                // A small, content wiggle - gentler than the shake-off, meant to repeat while held.
+                // A small, content wiggle plus a slight bow down, like leaning into the touch.
                 reactionRotation = sin(t * Math.PI.toFloat() * 2f) * 4f * (1f - t)
                 reactionScaleX = 1f + hump * 0.05f
                 reactionScaleY = 1f + hump * 0.05f
-                reactionOffsetY = 0f
+                reactionOffsetY = hump * 0.09f
             }
             PetEffect.HATCH, PetEffect.EVOLVE, PetEffect.COCOON -> {
                 // A bigger growth pulse for stage transitions.
@@ -316,6 +336,11 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         // Leans into the direction it's currently walking/steering toward.
         val moveLean = if (isWalking) moveDirX.coerceIn(-1f, 1f) * 5f else 0f
 
+        // A subtle side-to-side weight shift synced to each footstep, for a more natural walk.
+        val walkSway = if (isWalking && !isBeingDragged) {
+            sin(t % 900 / 900f * TAU).toFloat() * size * 0.012f
+        } else 0f
+
         // Slouches lower in its resting pose the hungrier it is.
         bob += (1f - hungerLevel) * size * 0.035f
 
@@ -360,7 +385,7 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         var tilt = sin(t % 2000 / 2000f * TAU).toFloat() * droopDegrees + stageWobble + hungerHunch +
             moveLean + stageQuirkTilt + thirstDroopTilt + reactionRotation
 
-        var shakeX = stageQuirkShakeX
+        var shakeX = stageQuirkShakeX + walkSway
         if (messyLevel > 0.02f) {
             val shakePeriod = lerp(3200f, 1000f, messyLevel)
             val shakePhase = (t % shakePeriod.toLong()) / shakePeriod
@@ -397,12 +422,44 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
             }
         }
 
+        // A one-shot faceplant after bumping into the top/bottom edge of the screen: falls onto
+        // its side, holds a beat, then gets back up.
+        var collapseSquash = 0f
+        if (collapseStart >= 0) {
+            val elapsed = t - collapseStart
+            when {
+                elapsed < COLLAPSE_FALL_MS -> {
+                    val p = elapsed / COLLAPSE_FALL_MS.toFloat()
+                    tilt += p * 84f
+                    bob += p * size * 0.10f
+                    collapseSquash = p * 0.15f
+                }
+                elapsed < COLLAPSE_FALL_MS + COLLAPSE_HOLD_MS -> {
+                    tilt += 84f
+                    bob += size * 0.10f
+                    collapseSquash = 0.15f
+                }
+                elapsed < COLLAPSE_TOTAL_MS -> {
+                    val p = 1f - (elapsed - COLLAPSE_FALL_MS - COLLAPSE_HOLD_MS) / COLLAPSE_RISE_MS.toFloat()
+                    tilt += 84f * p
+                    bob += size * 0.10f * p
+                    collapseSquash = 0.15f * p
+                }
+                else -> collapseStart = -1L
+            }
+        }
+
+        // An exaggerated wobble while dizzy (see the orbiting stars drawn in drawStickFigure).
+        if (t < dizzyUntil) {
+            tilt += sin(t % 450 / 450f * TAU).toFloat() * 12f
+        }
+
         canvas.save()
         canvas.translate(shakeX, bob + reactionOffsetY * size)
         canvas.rotate(tilt, size / 2f, size * 0.4f)
         canvas.scale(
-            stage.scale * reactionScaleX * (1f + flinchSquash * 0.6f),
-            stage.scale * reactionScaleY * (1f + pantPulse - grumblePulse) * (1f - flinchSquash),
+            stage.scale * reactionScaleX * (1f + flinchSquash * 0.6f + collapseSquash * 0.5f),
+            stage.scale * reactionScaleY * (1f + pantPulse - grumblePulse) * (1f - flinchSquash) * (1f - collapseSquash),
             size / 2f, size / 2f
         )
         drawStickFigure(canvas, size, t)
@@ -523,6 +580,20 @@ class PetView(context: Context, attrs: AttributeSet? = null) : View(context, att
         val gazeShift = sin(t % 5200 / 5200f * TAU).toFloat() * headRadius * 0.16f
         canvas.drawCircle(headCx - eyeOffset + gazeShift, eyeY, eyeRadius, shapePaint)
         canvas.drawCircle(headCx + eyeOffset + gazeShift, eyeY, eyeRadius, shapePaint)
+
+        // Little stars circling the head while dizzy.
+        if (t < dizzyUntil) {
+            shapePaint.style = Paint.Style.FILL
+            shapePaint.color = Color.parseColor("#F2C94C")
+            val orbitRadius = headRadius * 1.4f
+            val orbitCy = headCy - headRadius * 1.1f
+            for (i in 0 until 3) {
+                val angle = (t % 900L) / 900f * TAU + i * (TAU / 3f)
+                val sx = headCx + cos(angle) * orbitRadius
+                val sy = orbitCy + sin(angle) * orbitRadius * 0.4f
+                canvas.drawCircle(sx, sy, headRadius * 0.14f, shapePaint)
+            }
+        }
     }
 
     /**

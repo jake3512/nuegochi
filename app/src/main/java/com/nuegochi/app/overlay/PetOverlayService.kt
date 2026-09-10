@@ -28,6 +28,7 @@ import com.nuegochi.app.render.PetView
 import com.nuegochi.app.ui.EndingActivity
 import com.nuegochi.app.ui.MainActivity
 import kotlin.math.hypot
+import kotlin.math.sign
 import kotlin.random.Random
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -80,6 +81,20 @@ class PetOverlayService : LifecycleService() {
     private var downParamY = 0
     private var longPressFired = false
     private val longPressRunnable = Runnable { onLongPress() }
+
+    // Frame-to-frame drag direction, tracked while dragging: feeds both the momentum coast on
+    // release and shake detection (rapid direction reversals while held).
+    private var lastRawX = 0f
+    private var lastRawY = 0f
+    private var lastFrameDirX = 0f
+    private var momentumDirX = 0f
+    private var momentumDirY = 0f
+    private var shakeReversals = 0
+
+    // Momentum: keeps coasting in the last dragged direction for a couple seconds after release,
+    // then hands control back to free autonomous wandering.
+    private var isMomentum = false
+    private var momentumUntil = 0L
 
     // Growth only progresses while the screen is on; SCREEN_ON/OFF are protected broadcasts that
     // can only be observed via a dynamically registered receiver, not a manifest one.
@@ -216,6 +231,13 @@ class PetOverlayService : LifecycleService() {
                 downRawY = event.rawY
                 downParamX = params.x
                 downParamY = params.y
+                lastRawX = event.rawX
+                lastRawY = event.rawY
+                lastFrameDirX = 0f
+                momentumDirX = 0f
+                momentumDirY = 0f
+                shakeReversals = 0
+                isMomentum = false
                 hideActionMenu()
                 container.postDelayed(longPressRunnable, LONG_PRESS_MS)
             }
@@ -240,17 +262,51 @@ class PetOverlayService : LifecycleService() {
                     petView?.moveDirX = (dx / dp(80)).coerceIn(-1f, 1f)
                     petView?.isWalking = true
                     petView?.isBeingDragged = true
+
+                    // Track the direction the finger is moving frame-to-frame: the last sample
+                    // becomes the momentum direction on release, and rapid left/right reversals
+                    // count as a shake.
+                    val frameDx = event.rawX - lastRawX
+                    val frameDy = event.rawY - lastRawY
+                    val frameDist = hypot(frameDx.toDouble(), frameDy.toDouble()).toFloat()
+                    if (frameDist > dp(4)) {
+                        val dirX = frameDx / frameDist
+                        if (lastFrameDirX != 0f && sign(dirX) != sign(lastFrameDirX)) {
+                            shakeReversals++
+                        }
+                        lastFrameDirX = dirX
+                        momentumDirX = dirX
+                        momentumDirY = frameDy / frameDist
+                    }
+                    lastRawX = event.rawX
+                    lastRawY = event.rawY
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 container.removeCallbacks(longPressRunnable)
                 if (isDragging) {
-                    // Hand control straight back to free autonomous wandering from here.
                     isDragging = false
-                    petView?.isWalking = false
                     petView?.isBeingDragged = false
-                    pausedUntil = 0L
-                    pickNewTarget()
+                    when {
+                        shakeReversals >= SHAKE_REVERSALS_THRESHOLD -> {
+                            // Shaken while held: feel dizzy for a few seconds instead of coasting off.
+                            petView?.isWalking = false
+                            petView?.playDizzy()
+                            pausedUntil = SystemClock.elapsedRealtime() + PetView.DIZZY_DURATION_MS
+                            pickNewTarget()
+                        }
+                        momentumDirX != 0f || momentumDirY != 0f -> {
+                            // Keep coasting in the last touched direction, then hand back to free roam.
+                            isMomentum = true
+                            pausedUntil = 0L
+                            momentumUntil = SystemClock.elapsedRealtime() + MOMENTUM_DURATION_MS
+                        }
+                        else -> {
+                            petView?.isWalking = false
+                            pausedUntil = 0L
+                            pickNewTarget()
+                        }
+                    }
                 } else if (!longPressFired) {
                     onShortTap()
                 }
@@ -458,10 +514,11 @@ class PetOverlayService : LifecycleService() {
     }
 
     /**
-     * Moves the pet one frame closer to its autonomous wander target, using the normal walk
-     * animation rather than teleporting. Skipped entirely while the user is actively dragging it
-     * (that's handled synchronously in [handleTouch] instead, so the two never fight over
-     * [petParams]).
+     * Moves the pet one frame closer to its autonomous wander target (or, right after a drag
+     * release, coasts in [momentumDirX]/[momentumDirY] for [MOMENTUM_DURATION_MS] first - see
+     * [isMomentum]), using the normal walk animation rather than teleporting. Skipped entirely
+     * while the user is actively dragging it (that's handled synchronously in [handleTouch]
+     * instead, so the two never fight over [petParams]).
      */
     private fun stepWander(now: Long, dt: Float) {
         if (isDragging) return
@@ -476,6 +533,38 @@ class PetOverlayService : LifecycleService() {
             petView?.isWalking = false
             return
         }
+
+        if (isMomentum) {
+            if (now >= momentumUntil) {
+                isMomentum = false
+                pickNewTarget()
+            } else {
+                val screenH = resources.displayMetrics.heightPixels
+                val maxY = (screenH - petSizePx).toFloat()
+                val step = MOMENTUM_SPEED_PX_PER_SEC * dt
+                val nextX = (currentX + momentumDirX * step)
+                    .coerceIn(0f, (resources.displayMetrics.widthPixels - petSizePx).toFloat())
+                val nextY = currentY + momentumDirY * step
+                if (nextY <= 0f || nextY >= maxY) {
+                    currentX = nextX
+                    currentY = nextY.coerceIn(0f, maxY)
+                    isMomentum = false
+                    petView?.isWalking = false
+                    petView?.playCollapse()
+                    pausedUntil = now + PetView.COLLAPSE_TOTAL_MS
+                    pickNewTarget()
+                } else {
+                    currentX = nextX
+                    currentY = nextY
+                    petView?.moveDirX = momentumDirX
+                    petView?.isWalking = true
+                    maybeDropFootprint(now, stats.hygiene)
+                }
+                updatePetWindowPosition(container, params)
+                return
+            }
+        }
+
         val dx = targetX - currentX
         val dy = targetY - currentY
         val distance = hypot(dx.toDouble(), dy.toDouble()).toFloat()
@@ -493,6 +582,10 @@ class PetOverlayService : LifecycleService() {
             petView?.isWalking = true
             maybeDropFootprint(now, stats.hygiene)
         }
+        updatePetWindowPosition(container, params)
+    }
+
+    private fun updatePetWindowPosition(container: FrameLayout, params: WindowManager.LayoutParams) {
         val newX = currentX.toInt()
         val newY = currentY.toInt()
         if (params.x != newX || params.y != newY) {
@@ -549,5 +642,8 @@ class PetOverlayService : LifecycleService() {
         private const val NOTIF_ID = 42
         private const val WANDER_SPEED_PX_PER_SEC = 90f
         private const val LONG_PRESS_MS = 350L
+        private const val MOMENTUM_DURATION_MS = 2000L
+        private const val MOMENTUM_SPEED_PX_PER_SEC = 130f
+        private const val SHAKE_REVERSALS_THRESHOLD = 4
     }
 }
